@@ -1,9 +1,9 @@
 # dsh-usage-panel 开发计划
 
 > 本文档是开发依据：**改代码之前先改这里**。代码、README、测试与本文冲突时，以本文为准。
-> 当前版本：0.4.0（P0 + P0.1 + P1 + P2 + P3）
-> 状态：P0/P0.1/P1/P2/P3 均已完成（代码 + mock 测试；真实 API / 真机安装未测）
-> 最后更新：2026-11-11
+> 当前版本：0.5.0（P0 + P0.1 + P1 + P2 + P3 + P4）
+> 状态：P0/P0.1/P1/P2/P3/P4 均已完成（代码 + mock 测试；真实 API / 真机安装未测）
+> 最后更新：2026-11-12
 
 ---
 
@@ -27,6 +27,7 @@
 | **P1** | MiniMax 订阅/余额卡、阿里云余额卡；接入后汇总条才覆盖全部服务；账本明细补「按会话」数据源（见 3.3 / 4.3） | ✅ 已完成（0.2.0；mock 测试，真实 API 未测） |
 | **P2** | 自定义数据源（URL + 请求头 + JSON 取值路径）、余额阈值告警（卡片标红 + 可选系统通知） | ✅ 已完成（0.3.0；mock 测试，真实第三方接口/桌面通知未测） |
 | **P3** | 同一服务多 Key 的分别用量、导出 CSV | ✅ 已完成（0.4.0；mock 测试，真实多 Key API 未测） |
+| **P4** | MiniMax 按量（PAYG）Key：`account/query_balance` 自动回退 | ✅ 已完成（0.5.0；mock 测试，真实 PAYG Key 未测） |
 
 ### 1.3 本次调整的结论（2026-11-11 讨论）
 
@@ -271,6 +272,52 @@
 
 真实接口调用：**未测**（缺 MiniMax 订阅 Key / 阿里云 RAM AccessKey / DeepSeek 真实网络环境 / 真机通知权限）。
 
+### 3.6 P4（MiniMax PAYG，已完成，真实 PAYG Key 未测）
+
+用户场景：没有 Token Plan，只有按量 API Key，消费扣账户余额。不能把 PAYG Key 当成订阅 Key。
+
+| 事实 | 结论 |
+| --- | --- |
+| `GET /v1/token_plan/remains` | 只对订阅 Key 有效；PAYG 会返回 no-plan / not authorized |
+| `GET /account/query_balance` | 接受 PAYG API Key，返回账户余额（社区实测；非公开主文档） |
+| 余额单位 | 国内 CNY，国际 USD；响应可能带 currency |
+| token 消耗 | 余额接口不含消耗明细；`account/amount` 是网页会话接口，不纳入本阶段 |
+
+交互规则：
+
+- 同一个 MiniMax Key 字段，自动探测两次：
+  1. `token_plan/remains` 成功 → 现有订阅卡（百分比）；
+  2. no-plan 或 401/403/not authorized → `account/query_balance`；
+  3. 余额成功 → 卡片显示「按量余额 ¥X / $X」，不再显示百分比；
+  4. 两者都失败 → 错误态；优先显示余额接口的错误。
+- Token Plan Key 不应触发余额请求；PAYG Key 不应显示 0 或假百分比。
+- 附加 Key 同样按两段探测；行表显示金额。
+- 告警：PAYG 用余额金额比较阈值；Token Plan 仍用剩余百分比。UI 标签改为「MiniMax 余额 / 剩余额度阈值」。
+- 真实接口未测前，必须明确标注。
+
+离线测试：
+
+| ID | 测什么 | 通过标准 |
+| --- | --- | --- |
+| P4-1 | 余额解析 | `balance` 数字/字符串、默认 CNY/USD、显式 currency |
+| P4-2 | 订阅成功 | token_plan 成功时只调一次，不调余额 |
+| P4-3 | PAYG 回退 | token_plan no-plan 或 401 后调余额；余额成功返回 payg |
+| P4-4 | 双方失败 | 余额错误优先；不抛未捕获异常 |
+| P4-5 | 工程接线 | `card.payg`、附加 Key 行、缓存、刷新隔离 |
+| P4-6 | 告警/UI | PAYG 卡片金额、告警文案用金额；Token Plan 百分比不受影响 |
+| P4-7 | 回归 | P0–P3 全绿；密钥不出现在快照/错误/日志 |
+
+真实接口：**未测**（需要用户真实 PAYG Key）。
+
+**实现与验收回填（2026-11-12，v0.5.0）**：
+
+| 用例组 | 结果 | 备注 |
+| --- | --- | --- |
+| P4-1…P4-7 | ✅ 全部通过 | 真实 PAYG Key **未测** |
+| 回归 | ✅ Host 50 + P1 29 + P2 17 + P3 16 + P4 9 + Client 42 = 163 | `npm test` |
+
+实现：MiniMax 同一 Key 先查订阅额度；no-plan/auth/empty 时回退 `GET {api-base}/account/query_balance`；成功则 `card.payg`，失败优先显示余额错误；Token Plan 不触发余额请求。
+
 ### 3.5 P3（已完成，真实多 Key API 未测）
 
 > 设计日期：2026-11-11。先写测试与验收，再实现。
@@ -424,6 +471,13 @@
 | P3-1 | 多 Key 分别统计（主 Key + 3 把附加 Key，按 Key 余额/额度） | P3 | ✅ 已完成（真实多 Key API 未测） |
 | P3-2 | 导出 CSV（余额/账本/会话，BOM + RFC4180） | P3 | ✅ 已完成（mock/临时 home） |
 
+### 4.6 已完成（P4）
+
+| ID | 任务 | 阶段 | 状态 |
+| --- | --- | --- | --- |
+| P4-0 | P4 测试设计与可判定验收标准（写入 3.6） | P4 | ✅ 已完成（2026-11-12，先于代码） |
+| P4-1 | MiniMax PAYG `account/query_balance` 自动回退与余额卡 | P4 | ✅ 已完成（真实 PAYG Key 未测） |
+
 ---
 
 ## 5. 变更记录
@@ -522,3 +576,18 @@
 **文档/预览**：README 同步；截图更新 `panel-live/details/config/...` 并保留 P2 截图；预览支持多 Key 示例与 CSV 下载。
 
 **约束遵守**：未安装插件、未修改 profile、未动其它插件；未使用真实 Key 调接口。
+
+### 2026-11-12 · v0.5.0（P4 完成）
+
+**实现**：
+
+- MiniMax 同一 Key 两段探测：`token_plan/remains` → no-plan/auth/empty 时回退 `account/query_balance`。
+- 订阅 Key 成功时不发余额请求；PAYG 成功返回 `{kind:'payg', balance:{amount,currency}}`。
+- 卡片新增 `card.payg`，主数字显示按量余额；附加 Key 行同样显示金额。
+- 告警：PAYG 用金额比较，Token Plan 仍用剩余百分比；UI 阈值文案改为余额/剩余通用。
+- 区域 API base：国内 `api.minimaxi.com`，国际 `api.minimax.io`；余额默认 CNY/USD。
+- 双失败优先显示余额错误；网络/服务端错误不盲目回退。
+
+**测试**：Host 50/50、P1 29/29、P2 17/17、P3 16/16、P4 9/9、Client 42/42，共 163 条通过（`npm test`）。
+
+**真实接口**：MiniMax PAYG 真实 Key **未测**（本机没有可用按量 Key）；订阅真实 Key 仍未测。

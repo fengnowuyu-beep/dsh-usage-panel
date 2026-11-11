@@ -447,7 +447,7 @@ test('an unconfigured MiniMax card explains the subscription/PAYG split', () => 
   })
   const text = treeText(tree)
   ok(text.includes('未配置 MiniMax Key'), text)
-  ok(text.includes('按量 Key 没有公开的余额接口'), text)
+  ok(text.includes('按量 Key 可查账户余额'), text)
   ok(!text.includes('%'), 'no invented percentage')
 })
 
@@ -476,6 +476,30 @@ test('a MiniMax no-plan key gets a specific explanation, not a generic failure',
   const text = treeText(tree)
   ok(text.includes('这个 Key 不能查询订阅额度'), text)
   ok(!text.includes('NaN'), text)
+})
+
+test('a MiniMax PAYG card shows the account balance, not a percentage', () => {
+  const card = minimaxCard({
+    state: 'live',
+    quota: null,
+    payg: { amount: 8.88, currency: 'CNY' },
+    keys: [
+      { id: 'primary', label: '主 Key', masked: 'sk-…payg', state: 'live', source: 'live', fetchedAt: Date.now(), balance: { amount: 8.88, currency: 'CNY' }, remainingPercent: null },
+      { id: 'key-1', label: '备用', masked: 'sk-…back', state: 'live', source: 'live', fetchedAt: Date.now(), balance: { amount: 3.2, currency: 'CNY' }, remainingPercent: null }
+    ]
+  })
+  const tree = render(internals.MinimaxCard, {
+    card, t, onConfigure() {}, onTest() {}, testing: false, testResult: null
+  })
+  const text = treeText(tree)
+  ok(text.includes('¥8.88'), text)
+  ok(text.includes('按量余额'), text)
+  ok(text.includes('按量计费余额'), text)
+  ok(!text.includes('62%'), text)
+  const keyRows = treeText(render(internals.KeyRows, { card, t }))
+  ok(keyRows.includes('¥3.20'), keyRows)
+  const alert = render(internals.AlertLine, { card: { ...card, alert: { threshold: 20, value: 8.88 } }, t })
+  ok(treeText(alert).includes('低于阈值：¥20.00（当前 ¥8.88）'), treeText(alert))
 })
 
 test('an unconfigured Aliyun card points at the RAM sub-account', () => {
