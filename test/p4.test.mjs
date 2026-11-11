@@ -181,6 +181,10 @@ test('P4-5 a PAYG key becomes card.payg with an amount and no percentage', async
   equal(card.payg.cash, 8.88)
   equal(card.keys[0].remainingPercent, null)
   equal(card.keys[0].balance.amount, 8.88)
+  equal(card.homeUrl, 'https://platform.minimaxi.com/user-center/payment/balance')
+  const all = panel.snapshot().cards
+  equal(all.find((entry) => entry.id === 'deepseek').homeUrl, 'https://platform.deepseek.com/usage')
+  equal(all.find((entry) => entry.id === 'aliyun').homeUrl, 'https://billing.console.aliyun.com/')
   equal(card.alert, null)
 })
 

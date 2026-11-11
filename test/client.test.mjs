@@ -890,6 +890,20 @@ test('a low additional key row is colored, and the page shows a low banner', asy
   ok(findAll(keyRows, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsu-key-low')).length >= 1)
 })
 
+test('platform links open the official console in a new tab', () => {
+  const deepseek = render(internals.PlatformLink, { card: deepseekCard(), t })
+  equal(deepseek.props.href, 'https://platform.deepseek.com/usage')
+  equal(deepseek.props.target, '_blank')
+  equal(deepseek.props.rel, 'noopener noreferrer')
+  ok(treeText(deepseek).includes('打开平台'), treeText(deepseek))
+
+  const minimax = render(internals.PlatformLink, { card: minimaxCard({ homeUrl: 'https://platform.minimax.io/user-center/payment/balance' }), t })
+  equal(minimax.props.href, 'https://platform.minimax.io/user-center/payment/balance')
+
+  equal(render(internals.PlatformLink, { card: customCard(), t }), null)
+  equal(internals.platformUrl(customCard()), null)
+})
+
 test('the page shows a low-balance banner with the count', async () => {
   resetHooks()
   const snapshot = snapshotFixture({
