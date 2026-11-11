@@ -482,7 +482,7 @@ test('a MiniMax PAYG card shows the account balance, not a percentage', () => {
   const card = minimaxCard({
     state: 'live',
     quota: null,
-    payg: { amount: 8.88, currency: 'CNY' },
+    payg: { amount: 8.88, currency: 'CNY', cash: 8.88, voucher: 0, credit: 0, owed: 0 },
     keys: [
       { id: 'primary', label: '主 Key', masked: 'sk-…payg', state: 'live', source: 'live', fetchedAt: Date.now(), balance: { amount: 8.88, currency: 'CNY' }, remainingPercent: null },
       { id: 'key-1', label: '备用', masked: 'sk-…back', state: 'live', source: 'live', fetchedAt: Date.now(), balance: { amount: 3.2, currency: 'CNY' }, remainingPercent: null }
@@ -495,6 +495,7 @@ test('a MiniMax PAYG card shows the account balance, not a percentage', () => {
   ok(text.includes('¥8.88'), text)
   ok(text.includes('按量余额'), text)
   ok(text.includes('按量计费余额'), text)
+  ok(text.includes('现金余额'), text)
   ok(!text.includes('62%'), text)
   const keyRows = treeText(render(internals.KeyRows, { card, t }))
   ok(keyRows.includes('¥3.20'), keyRows)

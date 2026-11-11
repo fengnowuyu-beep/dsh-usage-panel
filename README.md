@@ -2,7 +2,7 @@
 
 DSH 桌面端（DeepSeek Harness）的侧边栏页面：把两件事分开摆清楚——**各服务官方余额还剩多少**，以及**本机 DSH 这个月钱花在哪**（账本 + 会话统计，标「估算」）。
 
-> 当前版本 **0.5.0（P0 + P0.1 + P1 + P2 + P3 + P4）**。
+> 当前版本 **0.5.1（P0 + P0.1 + P1 + P2 + P3 + P4）**。
 > P1 新增：MiniMax Token Plan 订阅额度卡、阿里云 BSS 余额卡、按会话统计（会话日志 + 内置定价）。
 > P2 新增：自定义数据源（URL + 请求头 + JSON 取值路径）、余额阈值告警（卡片标红 + 可选桌面通知）。
 > P3 新增：同一服务多 Key（每 Key 独立余额/额度行）、余额/账本/会话 CSV 导出。
@@ -197,7 +197,7 @@ ALIYUN_ACCESS_KEY_ID + ALIYUN_ACCESS_KEY_SECRET
 | --- | --- | --- |
 | DeepSeek 余额 | ✅ 已核实（2026-11-11 官网） | `GET /user/balance`，Bearer；`balance_infos[]`，金额是字符串；币种 CNY/USD。文档：<https://api-docs.deepseek.com/api/get-user-balance> |
 | MiniMax Token Plan | ✅ 端点/字段已核实（社区实测 + 官方 FAQ），⚠️ 语义有历史坑 | `GET {cn}/v1/token_plan/remains`（`www.minimax.cn` / `www.minimax.io`），Bearer；订阅额度。**未用真实订阅 Key 调用** |
-| MiniMax PAYG 余额 | ✅ 社区实测路径，⚠️ 非公开主文档 | `GET {api-base}/account/query_balance`（`api.minimaxi.com` / `api.minimax.io`），Bearer 按量 Key；响应 `balance` 数字/字符串，区域默认 CNY/USD。**未用真实按量 Key 调用** |
+| MiniMax PAYG 余额 | ✅ 真实 Key 已直连验证（2026-11-12，返回 `available_amount=13.91` CNY） | `GET {api-base}/account/query_balance`（`api.minimaxi.com` / `api.minimax.io`），Bearer 按量 Key；响应字段 `available_amount`、`cash_balance`、`voucher_balance`、`credit_balance`、`owed_amount`；区域默认 CNY/USD。**界面待重启后验证** |
 | 阿里云 BSS | ✅ 接口/返回字段已核实（官方文档） | `QueryAccountBalance`（BssOpenApi 2017-12-14），endpoint `business.aliyuncs.com`；返回 `Data.AvailableAmount/AvailableCashAmount/CreditAmount/MybankCreditAmount/Currency/QuotaLimit`；RAM 权限 `bss:DescribeAcccount`。**未用真实 RAM AccessKey 调用** |
 | 本机 DSH 账本 | ✅ 本机实际文件 | `~/.dsh/dsh-usage/usage-ledger.json` v1：`days[date][provider][model]` 的 tokens/calls/cost；插件只读，不重算价格 |
 | 会话日志 | ✅ 本机实际文件 | `~/.dsh/sessions/**/session.v4.jsonl.zstd`：多个 zstd 帧拼接，每帧一条事件；`session` / `session/title` / `assistant/message`（usage + `message.source.model` + time） |
@@ -320,14 +320,14 @@ dsh-usage-panel/
 - **会话统计只在离线 fixture 上验证**：真实 527 个会话日志的全量扫描耗时与准确性未测；首次展开可能较慢（会显示加载态）。
 - **会话定价有边界**：只内置 DeepSeek `deepseek-flash` / `deepseek-v4-pro` CNY 价；未知模型计 `unpricedCalls`；中国法定节假日未建模（按工作日算）；`cacheWrite` 无价格时不计价。
 - **MiniMax 字段语义有风险**：`usage_count` 在不同端点/版本有「已用/剩余」两种解读；面板按「已用」并优先采用 `*_remaining_percent`，但真实响应未核。
-- **MiniMax PAYG 余额端点**：`account/query_balance` 是社区实测路径，不是 MiniMax 公开主文档的主 API；真实按量 Key 未联调。余额接口不含 token 消耗明细，`account/amount` 需要网页 Cookie，未接入。
+- **MiniMax PAYG 余额端点**：`account/query_balance` 已用真实 Key 直连返回 `available_amount=13.91` CNY；但该路径不是 MiniMax 公开主文档的主 API，仍可能变动。余额接口不含 token 消耗明细，`account/amount` 需要网页 Cookie，未接入。
 - **阿里云账单明细**：仍无官方接口；可用自定义源接第三方/自建接口。
 - **自定义源不是 SSRF 边界**：URL 由本机用户填写，允许 loopback/内网地址（可能用于本地代理）；只限 http/https、禁 URL 内嵌凭据、禁保留头、5 秒超时。不要把它当成面向不可信用户的代理。
 - **多 Key 只用 mock 验证**：真实多 Key 余额/额度、同账号重复、附加 Key 失败路径均未联调。
 - **按 Key 消耗不可得**：DeepSeek/阿里云没有按 Key 用量接口，本地账本也不记录 Key；P3 只展示按 Key 余额/额度，不拆分请求消耗。
 - **CSV 会话标题**：用户主动导出时标题会进入文件，可能含业务信息；请确认落点。
 - **P3 已完成**：多 Key 余额/额度 + CSV。
-- **P4 已完成**：PAYG 余额自动探测；真实按量 Key 需要在面板填入后验证。
+- **P4 已完成**：PAYG 余额自动探测；真实 Key 已直连解析，界面待最后一次重启后验证。
 - **Windows 文件权限**：`chmod 0600` 在 Windows 上不改变 ACL 语义，凭据/自定义源文件由用户目录/NTFS ACL 保护；多人共用时建议环境变量。
 - **预览与生产 React**：预览用 React 17 UMD，插件运行在 DSH 自带 React 上。
 
@@ -376,6 +376,6 @@ dsh-usage-panel/
 
 | # | 验收项 | 状态 |
 | --- | --- | --- |
-| P4-1…P4-7 | 余额解析、订阅不回退、PAYG 回退、双方失败、卡片/附加 Key、金额告警、回归 | ✅ mock 全绿；真实 PAYG Key **未测** |
+| P4-1…P4-7 | 余额解析、订阅不回退、PAYG 回退、双方失败、卡片/附加 Key、金额告警、回归 | ✅ mock 全绿；真实 Key 已直连解析，**界面待重启** |
 
 测试总数：**Host 50 + P1 29 + P2 17 + P3 16 + P4 9 + Client 42 = 163**，全部通过（`npm test`）。

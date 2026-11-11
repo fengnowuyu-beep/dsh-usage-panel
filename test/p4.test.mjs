@@ -32,7 +32,15 @@ function planPayload() {
 }
 
 function balancePayload(amount = '8.88', currency = 'CNY') {
-  return { base_resp: { status_code: 0, status_msg: '' }, balance: amount, currency }
+  return {
+    base_resp: { status_code: 0, status_msg: 'success' },
+    available_amount: amount,
+    cash_balance: amount,
+    voucher_balance: '0.00',
+    credit_balance: '0.00',
+    owed_amount: '0.00',
+    currency
+  }
 }
 
 function routedFetch(routes) {
@@ -59,10 +67,15 @@ function routedFetch(routes) {
 
 console.log('# PAYG balance parser')
 
-test('P4-1 accepts numeric and string balances and defaults the currency', () => {
-  deepEqual(normalizeMinimaxBalance(balancePayload('12.34'), 'cn'), { amount: 12.34, currency: 'CNY' })
-  deepEqual(normalizeMinimaxBalance({ balance: 1.5, currency: 'USD' }, 'cn'), { amount: 1.5, currency: 'USD' })
-  deepEqual(normalizeMinimaxBalance({ data: { balance: 2 } }, 'global'), { amount: 2, currency: 'USD' })
+test('P4-1 accepts the real available_amount shape and defaults the currency', () => {
+  const parsed = normalizeMinimaxBalance(balancePayload('12.34'), 'cn')
+  equal(parsed.amount, 12.34)
+  equal(parsed.currency, 'CNY')
+  equal(parsed.cash, 12.34)
+  equal(parsed.voucher, 0)
+  equal(parsed.credit, 0)
+  equal(parsed.owed, 0)
+  deepEqual(normalizeMinimaxBalance({ available_amount: 2 }, 'global'), { amount: 2, currency: 'USD' })
 })
 
 test('P4-1 rejects missing/zero-shaped payloads and base_resp errors', () => {
@@ -93,7 +106,8 @@ test('P4-3 a no-plan key falls back to the PAYG balance on the API host', async 
   ])
   const result = await fetchMinimaxAccount({ apiKey: 'sk-payg', region: 'cn', timeoutMs: 500, fetchImpl: recorder.impl })
   equal(result.kind, 'payg')
-  deepEqual(result.balance, { amount: 8.88, currency: 'CNY' })
+  equal(result.balance.amount, 8.88)
+  equal(result.balance.currency, 'CNY')
   equal(recorder.calls.length, 2)
   ok(recorder.calls[1].startsWith(`${MINIMAX_API_BASES.cn}/account/query_balance`), recorder.calls[1])
 })
@@ -105,7 +119,8 @@ test('P4-3 an auth rejection from token_plan also falls back to balance', async 
   ])
   const result = await fetchMinimaxAccount({ apiKey: 'sk-payg', region: 'global', timeoutMs: 500, fetchImpl: recorder.impl })
   equal(result.kind, 'payg')
-  deepEqual(result.balance, { amount: 1.25, currency: 'USD' })
+  equal(result.balance.amount, 1.25)
+  equal(result.balance.currency, 'USD')
   ok(recorder.calls[1].startsWith(`${MINIMAX_API_BASES.global}/account/query_balance`), recorder.calls[1])
 })
 
@@ -161,9 +176,11 @@ test('P4-5 a PAYG key becomes card.payg with an amount and no percentage', async
   const card = snapshot.cards.find((entry) => entry.id === 'minimax')
   equal(card.state, 'live')
   equal(card.quota, null)
-  deepEqual(card.payg, { amount: 8.88, currency: 'CNY' })
+  equal(card.payg.amount, 8.88)
+  equal(card.payg.currency, 'CNY')
+  equal(card.payg.cash, 8.88)
   equal(card.keys[0].remainingPercent, null)
-  deepEqual(card.keys[0].balance, { amount: 8.88, currency: 'CNY' })
+  equal(card.keys[0].balance.amount, 8.88)
   equal(card.alert, null)
 })
 

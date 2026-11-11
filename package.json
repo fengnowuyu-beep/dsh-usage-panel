@@ -1,6 +1,6 @@
 {
   "name": "dsh-usage-panel",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "服务余额与用量面板：侧边栏跨服务本月消耗汇总（账本口径，标估算）+ 各服务官方余额卡 + 可折叠账本明细（近 7 天 / 按模型 / 按会话说明），手动刷新、Key 打码、失败降级 · Service balance & usage panel for DSH Desktop",
   "type": "module",
   "main": "lib/index.js",

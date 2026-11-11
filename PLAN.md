@@ -1,8 +1,8 @@
 # dsh-usage-panel 开发计划
 
 > 本文档是开发依据：**改代码之前先改这里**。代码、README、测试与本文冲突时，以本文为准。
-> 当前版本：0.5.0（P0 + P0.1 + P1 + P2 + P3 + P4）
-> 状态：P0/P0.1/P1/P2/P3/P4 均已完成（代码 + mock 测试；真实 API / 真机安装未测）
+> 当前版本：0.5.1（P0 + P0.1 + P1 + P2 + P3 + P4）
+> 状态：P0/P0.1/P1/P2/P3/P4 均已完成（P4 真实 Key 已直连解析；界面待重启验证；其他真实 API / 真机安装未测）
 > 最后更新：2026-11-12
 
 ---
@@ -313,7 +313,7 @@
 
 | 用例组 | 结果 | 备注 |
 | --- | --- | --- |
-| P4-1…P4-7 | ✅ 全部通过 | 真实 PAYG Key **未测** |
+| P4-1…P4-7 | ✅ 全部通过 | 真实 PAYG Key 已直连返回 `available_amount=13.91` CNY；界面待重启 |
 | 回归 | ✅ Host 50 + P1 29 + P2 17 + P3 16 + P4 9 + Client 42 = 163 | `npm test` |
 
 实现：MiniMax 同一 Key 先查订阅额度；no-plan/auth/empty 时回退 `GET {api-base}/account/query_balance`；成功则 `card.payg`，失败优先显示余额错误；Token Plan 不触发余额请求。
@@ -590,4 +590,11 @@
 
 **测试**：Host 50/50、P1 29/29、P2 17/17、P3 16/16、P4 9/9、Client 42/42，共 163 条通过（`npm test`）。
 
-**真实接口**：MiniMax PAYG 真实 Key **未测**（本机没有可用按量 Key）；订阅真实 Key 仍未测。
+**真实接口**：MiniMax PAYG 真实 Key **已直连验证**（2026-11-12，`available_amount=13.91` CNY，voucher=13.91）；界面待重启后验证。订阅真实 Key 仍未测。
+
+### 2026-11-12 · v0.5.1（P4 修正实际字段）
+
+- 实测 `account/query_balance` 返回 `available_amount`，不是 `balance`；解析器改为优先 `available_amount`，兼容 `balance`。
+- 增加 `cash_balance` / `voucher_balance` / `credit_balance` / `owed_amount` 明细；卡片显示现金/代金券/信用/欠费。
+- 真实 Key 直连结果：`amount=13.91 CNY, voucher=13.91`；Token Plan 返回 `2062 no active token plan subscription`，回退正确。
+- 测试仍为 163 条全绿；真实界面在最后一次重启后验证。
