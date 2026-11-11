@@ -27,7 +27,7 @@ const argPort = process.argv.find((value) => value.startsWith('--port='))
 const port = Number(argPort?.slice('--port='.length) ?? process.env.PORT ?? 8791)
 
 /** The current preview state, chosen by the page's `?mode=` parameter. */
-const MODES = new Set(['live', 'cached', 'unconfigured', 'error', 'no-ledger', 'custom', 'alert'])
+const MODES = new Set(['live', 'cached', 'unconfigured', 'error', 'no-ledger', 'custom', 'alert', 'payg', 'low'])
 let mode = 'live'
 
 const MIME = {
@@ -222,6 +222,20 @@ function buildSnapshot() {
   }
 
   const alertMode = mode === 'alert'
+  const lowMode = mode === 'low'
+  const paygMode = mode === 'payg' || lowMode
+  if (paygMode) {
+    minimax.quota = null
+    minimax.payg = lowMode
+      ? { amount: 8.88, currency: 'CNY', cash: 0, voucher: 8.88, credit: 0, owed: 0 }
+      : { amount: 13.91, currency: 'CNY', cash: 0, voucher: 13.91, credit: 0, owed: 0 }
+  }
+  if (lowMode) {
+    deepseek.balance = { ...deepseek.balance, total: 9.99, granted: 9.99, toppedUp: 0 }
+    deepseek.items = [{ currency: 'CNY', total: 9.99, granted: 9.99, toppedUp: 0 }]
+    aliyun.balance = { ...SAMPLE_ALIYUN, available: 1.48, cash: 0, credit: 0, mybankCredit: 0, quotaLimit: 0 }
+    minimax.payg = { amount: 8.88, currency: 'CNY', cash: 0, voucher: 8.88, credit: 0, owed: 0 }
+  }
   const customMode = mode === 'custom'
   if (alertMode) {
     deepseek.alert = { threshold: 200, value: 110 }

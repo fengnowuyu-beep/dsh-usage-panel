@@ -7,7 +7,7 @@ node preview/server.mjs
 # http://127.0.0.1:8791/?mode=live
 ```
 
-- `mode`：`live | cached | unconfigured | error | no-ledger`
+- `mode`：`live | cached | unconfigured | error | no-ledger | custom | alert | payg | low`
 - `&panel=config`：直接看内联配置表单
 - 页面顶部有醒目提示：**DeepSeek 余额是示例数据**；账本数字来自本机真实的
   `~/.dsh/dsh-usage/usage-ledger.json`（`no-ledger` 模式除外）。

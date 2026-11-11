@@ -833,9 +833,75 @@ test('desktop alerts respect the switch, permission and missing API', () => {
   equal(internals.notifyAlerts(on, t, { NotificationCtor: undefined, storage }), 0, 'API unavailable')
 })
 
-// ── P3: multi-key & CSV ─────────────────────────────────────────────────────
+// ── P4: low balance & UI ────────────────────────────────────────────────────
 
-console.log('# P3 multi-key & CSV')
+console.log('# low balance UI')
+
+test('lowOf applies the universal 10 threshold to amounts and percentages', () => {
+  equal(internals.lowOf(deepseekCard({ balance: { total: 10, currency: 'CNY' } })), null)
+  deepEqual(internals.lowOf(deepseekCard({ balance: { total: 9.99, currency: 'CNY' } })), { kind: 'amount', value: 9.99, currency: 'CNY' })
+  deepEqual(internals.lowOf(aliyunCard({ balance: { ...aliyunCard().balance, available: 1.48 } })), { kind: 'amount', value: 1.48, currency: 'CNY' })
+  deepEqual(internals.lowOf(minimaxCard({ payg: { amount: 8.88, currency: 'CNY' }, quota: null })), { kind: 'amount', value: 8.88, currency: 'CNY' })
+  deepEqual(internals.lowOf(minimaxCard({ quota: { ...minimaxCard().quota, primary: { interval: { remainingPercent: 9 } } } })), { kind: 'percent', value: 9 })
+  equal(internals.lowOf(minimaxCard({ quota: { ...minimaxCard().quota, primary: { interval: { remainingPercent: 10 } } } })), null)
+})
+
+test('a low Aliyun card gets the amber marker and sentence', () => {
+  const card = aliyunCard({ balance: { ...aliyunCard().balance, available: 1.48 } })
+  const tree = render(internals.AliyunCard, { card, t, onConfigure() {}, onTest() {}, testing: false, testResult: null })
+  equal(tree.props['data-low'], 'true')
+  const head = treeText(render(internals.CardHead, { card, t }))
+  ok(head.includes('余量偏低'), head)
+  const low = treeText(render(internals.LowLine, { card, t }))
+  ok(low.includes('余量不足 ¥10.00（当前 ¥1.48）'), low)
+})
+
+test('a low MiniMax PAYG card keeps the amber marker and alert precedence', () => {
+  const card = minimaxCard({
+    quota: null,
+    payg: { amount: 8.88, currency: 'CNY', cash: 0, voucher: 8.88, credit: 0, owed: 0 },
+    keys: [{ id: 'primary', label: '主 Key', masked: 'sk-…payg', state: 'live', source: 'live', fetchedAt: Date.now(), balance: { amount: 8.88, currency: 'CNY' }, remainingPercent: null }]
+  })
+  const tree = render(internals.MinimaxCard, { card, t, onConfigure() {}, onTest() {}, testing: false, testResult: null })
+  equal(tree.props['data-low'], 'true')
+  ok(treeText(render(internals.CardHead, { card, t })).includes('余量偏低'))
+  ok(treeText(render(internals.LowLine, { card, t })).includes('余量不足 ¥10.00（当前 ¥8.88）'))
+  ok(treeText(tree).includes('代金券'), treeText(tree))
+
+  const alerted = { ...card, alert: { threshold: 20, value: 8.88 } }
+  const alertedTree = render(internals.MinimaxCard, {
+    card: alerted,
+    t, onConfigure() {}, onTest() {}, testing: false, testResult: null
+  })
+  equal(alertedTree.props['data-alert'], 'true')
+  equal(render(internals.LowLine, { card: alerted, t }), null)
+  const alertLine = render(internals.AlertLine, { card: alerted, t })
+  ok(treeText(alertLine).includes('低于阈值：¥20.00（当前 ¥8.88）'), treeText(alertLine))
+})
+
+test('a low additional key row is colored, and the page shows a low banner', async () => {
+  const card = deepseekCard({
+    keys: [
+      { id: 'primary', label: '主 Key', masked: 'sk-…5678', state: 'live', source: 'live', fetchedAt: Date.now(), balance: { total: 110, currency: 'CNY' }, remainingPercent: null },
+      { id: 'key-1', label: '备用', masked: 'sk-…back', state: 'live', source: 'live', fetchedAt: Date.now(), balance: { total: 3, currency: 'CNY' }, remainingPercent: null }
+    ]
+  })
+  const keyRows = render(internals.KeyRows, { card, t })
+  ok(findAll(keyRows, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsu-key-low')).length >= 1)
+})
+
+test('the page shows a low-balance banner with the count', async () => {
+  resetHooks()
+  const snapshot = snapshotFixture({
+    deepseek: deepseekCard({ balance: { total: 9.99, currency: 'CNY' }, items: [] }),
+    aliyun: aliyunCard({ balance: { ...aliyunCard().balance, available: 1.48 } })
+  })
+  context.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, snapshot }) })
+  render(internals.UsagePage, { t })
+  await flush()
+  const text = treeText(render(internals.UsagePage, { t }))
+  ok(text.includes('2 个服务余量低于 10'), text)
+})
 
 test('KeyRows lists additional keys and hides itself for a single key', () => {
   const card = deepseekCard({
