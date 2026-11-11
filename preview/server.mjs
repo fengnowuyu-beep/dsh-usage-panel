@@ -17,6 +17,7 @@ import { dirname, extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { ledgerPath, resolveDshHome } from '../lib/config.js'
+import { buildExport } from '../lib/csv.js'
 import { readLedger } from '../lib/ledger.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -229,6 +230,31 @@ function buildSnapshot() {
     custom.alert = { threshold: 100, value: 55.5 }
   }
 
+  deepseek.keys = [
+    {
+      id: 'primary',
+      label: '主 Key',
+      masked: 'sk-…3f2a',
+      state: deepseek.state,
+      source: deepseek.source,
+      fetchedAt: deepseek.fetchedAt,
+      error: deepseek.error,
+      balance: deepseek.balance,
+      remainingPercent: null
+    },
+    {
+      id: 'key-demo0001',
+      label: '备用 Key',
+      masked: 'sk-…9b2c',
+      state: deepseek.state,
+      source: deepseek.source,
+      fetchedAt: deepseek.fetchedAt,
+      error: null,
+      balance: { currency: 'CNY', total: 220, granted: 0, toppedUp: 220 },
+      remainingPercent: null
+    }
+  ]
+
   const cards = [deepseek, minimax, aliyun, ...(customMode || alertMode ? [custom] : [])]
   const counts = { live: 0, cached: 0, unconfigured: 0, error: 0, idle: 0 }
   for (const card of cards) {
@@ -273,7 +299,10 @@ function buildSnapshot() {
         hasKey: configured,
         maskedKey: configured ? 'sk-…3f2a' : '',
         keySource: configured ? 'file' : 'none',
-        savedAt: configured ? now : null
+        savedAt: configured ? now : null,
+        extraKeys: configured
+          ? [{ id: 'key-demo0001', label: '备用 Key', masked: 'sk-…9b2c' }]
+          : []
       },
       minimax: { region: 'cn', hasKey: configured, maskedKey: configured ? 'mm-…9b2c' : '', keySource: configured ? 'file' : 'none' },
       aliyun: { endpoint: 'business.aliyuncs.com', hasKey: configured, accessKeyIdMasked: configured ? 'LTAI…eyId' : '', keySource: configured ? 'file' : 'none' },
@@ -354,6 +383,22 @@ const server = http.createServer((request, response) => {
     return
   }
   if (pathname.startsWith('/usage-panel/api/')) {
+    if (request.method === 'GET' && pathname === '/usage-panel/api/export') {
+      const scope = url.searchParams.get('scope') ?? ''
+      const result = buildExport(scope, scope === 'sessions' ? PREVIEW_SESSIONS : buildSnapshot(), new Date())
+      if (result === null) {
+        response.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+        response.end(JSON.stringify({ ok: false, error: { code: 'bad-scope', message: 'unknown scope' } }))
+        return
+      }
+      response.writeHead(200, {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="${result.filename}"`,
+        'content-length': Buffer.byteLength(result.csv)
+      })
+      response.end(result.csv)
+      return
+    }
     if (request.method !== 'POST') {
       response.writeHead(405, { 'content-type': 'application/json; charset=utf-8' })
       response.end(JSON.stringify({ ok: false, error: { code: 'method-error', message: 'POST only' } }))

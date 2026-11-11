@@ -2,10 +2,11 @@
 
 DSH 桌面端（DeepSeek Harness）的侧边栏页面：把两件事分开摆清楚——**各服务官方余额还剩多少**，以及**本机 DSH 这个月钱花在哪**（账本 + 会话统计，标「估算」）。
 
-> 当前版本 **0.3.0（P0 + P0.1 + P1 + P2）**。
+> 当前版本 **0.4.0（P0 + P0.1 + P1 + P2 + P3）**。
 > P1 新增：MiniMax Token Plan 订阅额度卡、阿里云 BSS 余额卡、按会话统计（会话日志 + 内置定价）。
 > P2 新增：自定义数据源（URL + 请求头 + JSON 取值路径）、余额阈值告警（卡片标红 + 可选桌面通知）。
-> 开发计划、优先级与状态以 **[PLAN.md](PLAN.md)** 为准。P3（多 Key / CSV）未做。
+> P3 新增：同一服务多 Key（每 Key 独立余额/额度行）、余额/账本/会话 CSV 导出。
+> 开发计划、优先级与状态以 **[PLAN.md](PLAN.md)** 为准。
 > 真实 API 调用需要各自的 Key，目前**未测**；下文会逐项标注。
 
 ![实时状态](docs/panel-live.png)
@@ -25,12 +26,14 @@ DSH 桌面端（DeepSeek Harness）的侧边栏页面：把两件事分开摆清
 | 阿里云卡 | BSS `QueryAccountBalance`：可用额度 / 现金余额 / 信控额度 / 网商信用 / Quota 限额 |
 | 自定义数据源卡 | 最多 8 个；手填 URL + 请求头 + JSON 取值路径；请求头 Token 只存 Host；取值必须是数字 |
 | 阈值告警 | 按服务/自定义源设阈值，严格低于才标红；可选桌面通知（Notification API，一天一次） |
+| 多 Key | 每个内置服务最多 4 把：主 Key + 最多 3 把附加 Key；附加 Key 各有余额/额度行；不伪造按 Key 的请求消耗 |
+| CSV 导出 | 余额 / 账本 / 会话三份 CSV；UTF-8 BOM + CRLF；Key 只导出 mask |
 | 账本明细（折叠） | 近 7 天趋势、按模型（provider + model）本月消耗与调用 |
 | 按会话统计（懒加载） | 展开明细时扫描本月会话日志，按内置价表估算每个会话的消耗 / 调用 / Token；只返回标题与数字 |
 | 手动刷新 | 页头刷新全部；每张卡「测试连接」只测自己 |
 | Key 打码 | 页面只收到掩码；明文仅在 Host 端 |
 | 失败降级 | 5 秒超时 + 单服务错误态；有缓存则显示旧值并标「缓存」；任一服务失败不影响其它卡 |
-| 配置页 | 五个页签：三个服务、告警、自定义数据源；各自保存/清除，互不覆盖 |
+| 配置页 | 五个页签：三个服务、告警、自定义数据源；每服务含附加 Key 管理 |
 
 页面结构：
 
@@ -136,14 +139,36 @@ E:/Data/Project/DeepSeekHarness/DSH-Homemade-Plugins/dsh-usage-panel
 
 限制：仅 `http`/`https`；URL 不能带用户名/密码；GET；5 秒超时；响应 JSON ≤1MB；请求头禁止 CR/LF、`Host`、`Content-Length` 等保留头；取值不是数字会显示错误，不会用 0 冒充。请求头可能含 Token，因此整份自定义源配置保存在 **Host 私有文件**，不进 `settings.json`。
 
+### 多 Key
+
+「服务配置 → DeepSeek / MiniMax / 阿里云 → 附加 Key」：
+
+- 每个服务最多 4 把：主 Key（原有单 Key 字段）+ 最多 3 把附加 Key；
+- 附加 Key 填标签 + 密钥（阿里云为 AccessKey ID + Secret），保存后自动查询一次；
+- 卡片主数字仍是主 Key；附加 Key 在下方表格里显示各自余额/额度/状态；
+- 一把附加 Key 失败只影响自己的行，不影响主 Key 或其它行；
+- 凭据文件升级为 v3，旧 v2 单 Key 自动兼容，不会丢 Key。
+
+**口径**：DeepSeek/阿里云的余额是账户级，同一账号的多把 Key 会显示相同余额；官方没有按 Key 的请求消耗接口，本地账本也不记录用了哪把 Key。因此这里**只做按 Key 的余额/额度**，不做「按 Key 消耗」的拆分；告警仍看主 Key。
+
+### CSV 导出
+
+页面底部三个链接：
+
+- **导出余额 CSV**：一行一个 Key（服务、标签、mask、状态、余额/额度、告警、时间）；
+- **导出账本 CSV**：近 7 天 daily 行 + 按模型行；
+- **导出会话 CSV**：本月会话标题、调用、Token、估算成本、未定价调用。
+
+编码为 UTF-8 BOM + CRLF，Excel 可直接打开；字段按 RFC4180 转义；只导出 Key 的 mask，不导出 Key/header 明文。会话标题可能含业务信息，导出前请确认落点。
+
 ### 存储与备选方式
 
 | 文件 | 内容 |
 | --- | --- |
-| `~/.dsh/usage-panel/credentials.json` | 三个内置服务的凭据（v2 结构），创建时 `0600`（Windows 上 `chmod` 为尽力而为，实际由用户目录 ACL 保护） |
+| `~/.dsh/usage-panel/credentials.json` | v3：三个服务的主 Key + `extraKeys`（含明文，仅 Host），创建时 `0600`（Windows 上 `chmod` 为尽力而为，实际由用户目录 ACL 保护） |
 | `~/.dsh/usage-panel/settings.json` | 非密配置：DeepSeek baseUrl、MiniMax region、阿里云 endpoint、告警阈值/开关、超时等 |
 | `~/.dsh/usage-panel/custom-sources.json` | 自定义数据源（含请求头值），`0600`；已加入 `.gitignore` |
-| `~/.dsh/usage-panel/balance-cache.json` | 各服务/自定义源上次成功结果（只含指纹，不含 Key/header 值） |
+| `~/.dsh/usage-panel/balance-cache.json` | 各服务/附加 Key/自定义源上次成功结果（只含指纹，不含 Key/header 值） |
 
 凭据文件结构见 [`examples/credentials.example.json`](examples/credentials.example.json)，配置见 [`examples/settings.example.json`](examples/settings.example.json)，自定义源见 [`examples/custom-sources.example.json`](examples/custom-sources.example.json)。
 
@@ -169,6 +194,8 @@ ALIYUN_ACCESS_KEY_ID + ALIYUN_ACCESS_KEY_SECRET
 | 本机 DSH 账本 | ✅ 本机实际文件 | `~/.dsh/dsh-usage/usage-ledger.json` v1：`days[date][provider][model]` 的 tokens/calls/cost；插件只读，不重算价格 |
 | 会话日志 | ✅ 本机实际文件 | `~/.dsh/sessions/**/session.v4.jsonl.zstd`：多个 zstd 帧拼接，每帧一条事件；`session` / `session/title` / `assistant/message`（usage + `message.source.model` + time） |
 | 自定义数据源 | ✅ 本机配置 + mock 网络 | 用户自填 GET URL + headers + JSON 路径；实现只接受数字；真实第三方接口 **未测** |
+| 多 Key | ✅ 本机凭据 + mock 网络 | 每 Key 独立查询余额/额度；同账号 Key 会重复；**不拆分按 Key 消耗** |
+| CSV | ✅ 本机数据 | 余额/账本/会话三份；BOM + CRLF；仅 mask，无 Key/header 明文 |
 | DeepSeek 定价 | ✅ 官网核对（2026-11-11） | 1M tokens 单价；peak 01:00–04:00 / 06:00–10:00 UTC 工作日，其余半价；中国节假日不建模。文档：<https://api-docs.deepseek.com/quick_start/pricing> |
 
 **未核实/未测**：MiniMax 真实订阅额度、阿里云真实余额、三家服务的真实网络错误路径、DSH 真机内的卡片渲染。mock 测试通过不等于真实接口已验证。
@@ -219,10 +246,13 @@ node test/p1.test.mjs
 # P2：自定义源 / JSON 路径 / 告警阈值（17）
 node test/p2.test.mjs
 
-# 浏览器端：四卡 / 配置五页签 / 告警表单 / 会话表 / 页面（37）
+# P3：多 Key / 凭据迁移 / CSV（16）
+node test/p3.test.mjs
+
+# 浏览器端：四卡 / 五页签 / 多 Key 行 / CSV 链接 / 会话表 / 页面（41）
 node test/client.test.mjs
 
-# 全部（133）
+# 全部（153）
 npm test
 ```
 
@@ -251,6 +281,7 @@ dsh-usage-panel/
 │  ├─ config.js            # 设置、凭据 v2、自定义源存储、打码、缓存
 │  ├─ alerts.js            # 阈值判定（严格小于）
 │  ├─ custom.js            # 自定义源校验、JSON 路径、请求
+│  ├─ csv.js               # CSV 转义、BOM、三个 scope
 │  ├─ remote.js            # 统一 deadline / 错误分类
 │  ├─ deepseek.js          # GET /user/balance
 │  ├─ providers/
@@ -260,7 +291,7 @@ dsh-usage-panel/
 │  ├─ pricing.js           # DeepSeek CNY 价表 + peak 判定
 │  ├─ sessions.js          # 多帧 zstd、会话聚合
 │  └─ client.js            # 侧边栏入口 + 四类卡 + 五页签配置 + 折叠明细
-├─ test/                   # 离线用例（host / p1 / p2 / client + harness）
+├─ test/                   # 离线用例（host / p1 / p2 / p3 / client + harness）
 ├─ preview/                # 本地视觉预览（非插件运行时）
 ├─ examples/               # 配置样例（占位凭据 / 自定义源）
 ├─ scripts/                # 暂存区密钥扫描
@@ -280,7 +311,10 @@ dsh-usage-panel/
 - **MiniMax 字段语义有风险**：`usage_count` 在不同端点/版本有「已用/剩余」两种解读；面板按「已用」并优先采用 `*_remaining_percent`，但真实响应未核。
 - **MiniMax 按量余额、阿里云账单明细**：仍无官方接口；可用自定义源接第三方/自建接口。
 - **自定义源不是 SSRF 边界**：URL 由本机用户填写，允许 loopback/内网地址（可能用于本地代理）；只限 http/https、禁 URL 内嵌凭据、禁保留头、5 秒超时。不要把它当成面向不可信用户的代理。
-- **P3 未做**：多 Key 分别统计、导出 CSV。
+- **多 Key 只用 mock 验证**：真实多 Key 余额/额度、同账号重复、附加 Key 失败路径均未联调。
+- **按 Key 消耗不可得**：DeepSeek/阿里云没有按 Key 用量接口，本地账本也不记录 Key；P3 只展示按 Key 余额/额度，不拆分请求消耗。
+- **CSV 会话标题**：用户主动导出时标题会进入文件，可能含业务信息；请确认落点。
+- **P3 已完成**：多 Key 余额/额度 + CSV；无更多阶段。
 - **Windows 文件权限**：`chmod 0600` 在 Windows 上不改变 ACL 语义，凭据/自定义源文件由用户目录/NTFS ACL 保护；多人共用时建议环境变量。
 - **预览与生产 React**：预览用 React 17 UMD，插件运行在 DSH 自带 React 上。
 
@@ -317,4 +351,12 @@ dsh-usage-panel/
 | ALRT-1…ALRT-6 | 严格阈值、四指标、快照 alert、标红、通知去重/开关/权限、配置校验 | ✅ mock 全绿；真实桌面通知 **未测** |
 | P2-IN-1…3 | 4 类卡共存、P0/P1 回归、安全检查 | ✅ |
 
-测试总数：**Host 50 + P1 29 + P2 17 + Client 37 = 133**，全部通过（`npm test`）。
+### P3
+
+| # | 验收项 | 状态 |
+| --- | --- | --- |
+| MK-1…MK-8 | v2→v3 迁移、附加 Key 增删/上限、打码、分别查询、隔离、缓存、刷新语义、UI | ✅ mock 全绿；真实多 Key API **未测** |
+| CSV-1…CSV-8 | BOM/CRLF、RFC4180 转义、三种 scope、空数据、附件路由、UI 链接 | ✅ mock/临时 home 全绿 |
+| P3-IN-1…3 | 主 Key 单 Key 回归、安全扫描、约束 | ✅ |
+
+测试总数：**Host 50 + P1 29 + P2 17 + P3 16 + Client 41 = 153**，全部通过（`npm test`）。

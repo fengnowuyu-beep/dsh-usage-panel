@@ -643,7 +643,7 @@ test('the Aliyun form has id, secret and endpoint fields', () => {
     onClear: async () => {}
   })
   const inputs = findAll(tree, (element) => element.type === 'input')
-  equal(inputs.length, 3)
+  equal(inputs.length, 6, 'three primary fields plus three additional-key fields')
   ok(inputs[0].props.placeholder.includes('LTAI…eyId'), inputs[0].props.placeholder)
   equal(inputs[1].props.type, 'password')
 })
@@ -808,9 +808,87 @@ test('desktop alerts respect the switch, permission and missing API', () => {
   equal(internals.notifyAlerts(on, t, { NotificationCtor: undefined, storage }), 0, 'API unavailable')
 })
 
-// ── page ────────────────────────────────────────────────────────────────────
+// ── P3: multi-key & CSV ─────────────────────────────────────────────────────
 
-console.log('# page')
+console.log('# P3 multi-key & CSV')
+
+test('KeyRows lists additional keys and hides itself for a single key', () => {
+  const card = deepseekCard({
+    keys: [
+      { id: 'primary', label: '主 Key', masked: 'sk-…5678', state: 'live', source: 'live', fetchedAt: Date.now(), balance: { total: 110, currency: 'CNY' }, remainingPercent: null },
+      { id: 'key-1', label: '备用', masked: 'sk-…9abc', state: 'live', source: 'live', fetchedAt: Date.now(), balance: { total: 220, currency: 'CNY' }, remainingPercent: null }
+    ]
+  })
+  const text = treeText(render(internals.KeyRows, { card, t }))
+  ok(text.includes('备用'), text)
+  ok(text.includes('sk-…9abc'), text)
+  ok(text.includes('¥220.00'), text)
+  equal(treeText(render(internals.KeyRows, { card: deepseekCard({ keys: card.keys.slice(0, 1) }), t })), '')
+})
+
+test('ExportLinks points at the three Host scopes', () => {
+  const tree = render(internals.ExportLinks, { t })
+  const links = findAll(tree, (element) => element.type === 'a')
+  equal(links.length, 3)
+  ok(links[0].props.href.endsWith('/export?scope=balances'), links[0].props.href)
+  ok(links[1].props.href.endsWith('/export?scope=ledger'))
+  ok(links[2].props.href.endsWith('/export?scope=sessions'))
+})
+
+test('the service form adds and deletes an additional key', async () => {
+  resetHooks()
+  const added = []
+  const deleted = []
+  const settings = { ...SETTINGS, deepseek: { ...SETTINGS.deepseek, extraKeys: [] } }
+  let tree = render(internals.ServiceForm, {
+    service: 'deepseek',
+    settings,
+    t,
+    onSave: async () => {},
+    onClear: async () => {},
+    onAddExtra: async (service, patch) => { added.push([service, patch]) },
+    onDeleteExtra: async (service, id) => { deleted.push([service, id]) }
+  })
+  const inputs = findAll(tree, (element) => element.type === 'input')
+  const labelInput = inputs.find((element) => element.props.placeholder === '例如：备用 / 团队 B')
+  inputs[inputs.length - 1].props.onChange({ target: { value: 'sk-extra1234567890' } })
+  labelInput.props.onChange({ target: { value: '备用' } })
+  tree = render(internals.ServiceForm, {
+    service: 'deepseek',
+    settings,
+    t,
+    onSave: async () => {},
+    onClear: async () => {},
+    onAddExtra: async (service, patch) => { added.push([service, patch]) },
+    onDeleteExtra: async (service, id) => { deleted.push([service, id]) }
+  })
+  const add = find(tree, (element) => element.type === 'button' && treeText(element) === '添加')
+  await add.props.onClick()
+  await flush(2)
+  deepEqual(added, [['deepseek', { label: '备用', apiKey: 'sk-extra1234567890' }]])
+})
+
+test('the service form deletes an additional key by id', async () => {
+  resetHooks()
+  const deleted = []
+  const settings = {
+    ...SETTINGS,
+    deepseek: { ...SETTINGS.deepseek, extraKeys: [{ id: 'key-1', label: '备用', masked: 'sk-…9abc' }] }
+  }
+  const tree = render(internals.ServiceForm, {
+    service: 'deepseek',
+    settings,
+    t,
+    onSave: async () => {},
+    onClear: async () => {},
+    onAddExtra: async () => {},
+    onDeleteExtra: async (service, id) => { deleted.push([service, id]) }
+  })
+  const remove = find(tree, (element) => element.type === 'button' && treeText(element).includes('删除'))
+  await remove.props.onClick()
+  await flush(2)
+  deepEqual(deleted, [['deepseek', 'key-1']])
+})
 
 test('the page paints skeleton, then three cards and a collapsed detail', async () => {
   resetHooks()
