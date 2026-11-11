@@ -1,0 +1,33 @@
+# Dependencies and generated bundles
+node_modules/
+preview/vendor/
+
+# Local runtime data: never commit credentials, caches, balances or logs
+*.log
+*.local.json
+.credentials*
+credentials*.json
+balance-cache.json
+!examples/credentials.example.json
+.preview-cache/
+preview/.cache/
+.dsh/
+tmp/
+temp/
+*.tmp
+
+# Test scratch homes (tests use the OS temp dir, these are precautionary)
+.test-home/
+test-home/
+*-test-home/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Build and packaging output
+*.zip
+*.tgz
+coverage/

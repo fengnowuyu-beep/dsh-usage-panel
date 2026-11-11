@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>服务余额与用量 · 本地预览</title>
+  <style>
+    /* A stand-in for the DSH dark theme: the panel styles read these tokens
+       with their own fallbacks, so the preview shows the real layout. */
+    :root {
+      color-scheme: dark;
+      --dsw-alias-bg-base: #101014;
+      --dsw-alias-bg-layer-1: #17171a;
+      --dsw-alias-bg-layer-2: rgba(255, 255, 255, 0.07);
+      --dsw-alias-label-primary: #f2f4f7;
+      --dsw-alias-label-secondary: #c9cdd4;
+      --dsw-alias-label-tertiary: #8a9199;
+      --dsw-alias-border-l1: #2e3138;
+      --dsw-alias-border-l2: #3a3f47;
+      --dsw-alias-brand-primary: #4d6bfe;
+      --dsw-alias-brand-primary-hover: #5f7cff;
+      --dsw-alias-interactive-bg-hover: rgba(127, 127, 127, 0.16);
+      --dsw-radius-sm: 6px;
+      --dsh-frame-top-clearance: 0px;
+    }
+    html, body { margin: 0; height: 100%; background: var(--dsw-alias-bg-base); }
+    body {
+      color: var(--dsw-alias-label-primary);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+      font-size: 14px;
+    }
+    #preview-banner {
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      height: 38px;
+      padding: 0 18px;
+      border-bottom: 1px solid #2e3138;
+      background: #0b0b0e;
+      color: #8a9199;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    #preview-banner strong { color: #fbbf24; font-weight: 600; }
+    #preview-banner nav { display: flex; gap: 10px; }
+    #preview-banner a { color: #8a9199; text-decoration: none; padding: 2px 6px; border-radius: 6px; }
+    #preview-banner a[aria-current="page"] { color: #fff; background: rgba(77, 107, 254, 0.28); }
+    #preview-banner a:hover { color: #fff; }
+    #root { height: calc(100% - 38px); }
+  </style>
+</head>
+<body>
+  <div id="preview-banner">
+    <span><strong>本地预览</strong> · DeepSeek 余额为示例数据，账本数字来自本机真实账本（除非选择「无账本」）</span>
+    <nav>
+      <a href="/?mode=live">实时</a>
+      <a href="/?mode=cached">缓存</a>
+      <a href="/?mode=unconfigured">未配置</a>
+      <a href="/?mode=error">异常</a>
+      <a href="/?mode=no-ledger">无账本</a>
+    </nav>
+  </div>
+  <div id="root"></div>
+
+  <script src="/vendor/react.production.min.js"></script>
+  <script src="/vendor/react-dom.production.min.js"></script>
+  <script>
+    // The real bundle registers itself with the shell's module loader; here the
+    // loader is a one-slot stub and React comes from the vendored UMD build.
+    window.__ModuleLoader__ = { load(definition) { window.__usagePanelDefinition = definition } }
+  </script>
+  <script src="/client.js"></script>
+  <script>
+    ;(function () {
+      const definition = window.__usagePanelDefinition
+      if (definition === undefined) {
+        document.getElementById('root').textContent = '客户端 bundle 未能加载'
+        return
+      }
+      const exported = definition.factory((id) => {
+        if (id === 'react') return { default: window.React }
+        throw new Error('unexpected require("' + id + '")')
+      })
+      const internals = exported.__internals
+      internals.installStyles()
+      const t = internals.readerOf((key, params) => internals.interpolate(internals.zh[key] ?? key, params))
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('panel') === 'config') {
+        // A direct view of the inline configuration form, for layout checks.
+        const settings = {
+          baseUrl: 'https://api.deepseek.com',
+          timeoutMs: 5000,
+          currency: 'CNY',
+          hasKey: true,
+          maskedKey: 'sk-…3f2a',
+          keySource: 'file',
+          savedAt: Date.now()
+        }
+        ReactDOM.render(React.createElement(internals.ConfigPanel, {
+          settings,
+          t,
+          onSave: async () => {},
+          onClear: async () => {},
+          onClose: () => {}
+        }), document.getElementById('root'))
+      } else {
+        ReactDOM.render(React.createElement(internals.UsagePage, { t }), document.getElementById('root'))
+        if (params.get('details') === '1') {
+          // Open the collapsed ledger detail once the page has painted, so the
+          // expanded layout can be screenshotted too.
+          const openWhenReady = () => {
+            const head = document.querySelector('.dsu-details-head')
+            if (head === null) { setTimeout(openWhenReady, 100); return }
+            head.click()
+          }
+          setTimeout(openWhenReady, 200)
+        }
+      }
+      // Mark the active mode link for the reader's orientation.
+      const mode = new URLSearchParams(window.location.search).get('mode') ?? 'live'
+      for (const link of document.querySelectorAll('#preview-banner a')) {
+        if (new URL(link.href).searchParams.get('mode') === mode) link.setAttribute('aria-current', 'page')
+      }
+    })()
+  </script>
+</body>
+</html>
