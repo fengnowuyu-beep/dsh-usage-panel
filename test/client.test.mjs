@@ -41,9 +41,10 @@ const hooks = {
     if (!(index in hookSlots)) hookSlots[index] = fn()
   },
   useCallback(fn) {
-    const index = hookCursor++
-    if (!(index in hookSlots)) hookSlots[index] = fn
-    return hookSlots[index]
+    // Re-render with the newest closure so a form tested after a state change
+    // sees the updated values.
+    hookCursor += 1
+    return fn
   }
 }
 
@@ -168,6 +169,8 @@ const SETTINGS = {
   },
   minimax: { region: 'cn', hasKey: true, maskedKey: 'mm-…9b2c', keySource: 'file' },
   aliyun: { endpoint: 'business.aliyuncs.com', hasKey: true, accessKeyIdMasked: 'LTAI…eyId', keySource: 'file' },
+  alerts: { enabled: true, desktop: false, thresholds: { deepseek: 50 } },
+  customSources: [],
   ledgerFile: '~/.dsh/dsh-usage/usage-ledger.json',
   settingsFile: '~/.dsh/usage-panel/settings.json',
   credentialsFile: '~/.dsh/usage-panel/credentials.json'
@@ -240,6 +243,27 @@ function aliyunCard(overrides = {}) {
   }
 }
 
+function customCard(overrides = {}) {
+  return {
+    id: 'custom-abcd1234',
+    name: 'Example balance',
+    kind: 'custom',
+    state: 'live',
+    source: 'live',
+    fetchedAt: Date.now(),
+    error: null,
+    key: { configured: true, masked: '', source: 'file' },
+    custom: {
+      url: 'https://example.com/balance',
+      valuePath: 'data.balance',
+      currency: 'CNY',
+      headers: [{ name: 'Authorization', masked: '…oken' }]
+    },
+    balance: { value: 55.5, currency: 'CNY' },
+    ...overrides
+  }
+}
+
 function ledgerCard(overrides = {}) {
   return {
     id: 'ledger',
@@ -291,14 +315,16 @@ function snapshotFixture(overrides = {}) {
   const deepseek = overrides.deepseek ?? deepseekCard()
   const minimax = overrides.minimax ?? minimaxCard()
   const aliyun = overrides.aliyun ?? aliyunCard()
+  const custom = overrides.custom ?? null
   const ledger = overrides.ledger ?? ledgerCard()
+  const cards = [deepseek, minimax, aliyun, ...(custom === null ? [] : [custom])]
   return {
     generatedAt: Date.now(),
-    cards: [deepseek, minimax, aliyun],
+    cards,
     ledger,
     summary: {
-      services: 3,
-      live: 3,
+      services: cards.length,
+      live: cards.length,
       cached: 0,
       unconfigured: 0,
       error: 0,
@@ -579,9 +605,11 @@ test('the config panel has one tab per service and starts on the requested one',
     onClose() {}
   })
   const tabs = findAll(tree, (element) => element.props?.className === 'dsu-tab')
-  equal(tabs.length, 3)
+  equal(tabs.length, 5)
   equal(tabs[0].props['aria-selected'], 'false')
   equal(tabs[2].props['aria-selected'], 'true')
+  equal(treeText(tabs[3]), '告警')
+  equal(treeText(tabs[4]), '自定义数据源')
   const form = find(tree, (element) => element.type === internals.ServiceForm)
   equal(form.props.service, 'aliyun')
 })
@@ -618,6 +646,166 @@ test('the Aliyun form has id, secret and endpoint fields', () => {
   equal(inputs.length, 3)
   ok(inputs[0].props.placeholder.includes('LTAI…eyId'), inputs[0].props.placeholder)
   equal(inputs[1].props.type, 'password')
+})
+
+// ── P2: custom sources & alerts ─────────────────────────────────────────────
+
+console.log('# P2 custom sources & alerts')
+
+test('a custom card shows its value, JSON path, header count and URL', () => {
+  const tree = render(internals.CustomCard, {
+    card: customCard(), t, onConfigure() {}, onTest() {}, testing: false, testResult: null
+  })
+  const text = treeText(tree)
+  ok(text.includes('¥55.50'), text)
+  equal(find(tree, (element) => element.type === internals.CardHead).props.card.name, 'Example balance')
+  ok(text.includes('data.balance'), text)
+  ok(text.includes('https://example.com/balance'), text)
+  equal(tree.props['data-alert'], undefined)
+})
+
+test('an alerted card carries the red marker and the threshold sentence', () => {
+  const tree = render(internals.CustomCard, {
+    card: customCard({ alert: { threshold: 100, value: 55.5 } }),
+    t, onConfigure() {}, onTest() {}, testing: false, testResult: null
+  })
+  equal(tree.props['data-alert'], 'true')
+  const alert = render(internals.AlertLine, { card: customCard({ alert: { threshold: 100, value: 55.5 } }), t })
+  ok(treeText(alert).includes('低于阈值：¥100.00（当前 ¥55.50）'), treeText(alert))
+})
+
+test('the alert threshold form saves only the thresholds that are on', async () => {
+  resetHooks()
+  let saved
+  const settings = {
+    ...SETTINGS,
+    customSources: [{ id: 'custom-abcd1234', name: 'Example balance', url: 'https://example.com', valuePath: 'data.balance', currency: 'CNY', headers: [] }]
+  }
+  let tree = render(internals.AlertsForm, {
+    settings, t, onSave: async (patch) => { saved = patch }
+  })
+  const inputs = findAll(tree, (element) => element.type === 'input' && element.props.type === 'number')
+  equal(inputs.length, 4, 'three built-ins plus one custom source')
+  inputs[0].props.onChange({ target: { value: '60' } })
+  tree = render(internals.AlertsForm, { settings, t, onSave: async (patch) => { saved = patch } })
+  const save = find(tree, (element) => element.type === 'button' && treeText(element).includes('保存'))
+  await save.props.onClick()
+  await flush(2)
+  deepEqual(saved, { enabled: true, desktop: false, thresholds: { deepseek: 60 } })
+})
+
+test('the custom-source editor preserves existing headers when the box is blank', async () => {
+  resetHooks()
+  let saved
+  const existing = {
+    id: 'custom-abcd1234',
+    name: 'Example balance',
+    url: 'https://example.com/balance',
+    valuePath: 'data.balance',
+    currency: 'CNY',
+    headers: [{ name: 'Authorization', masked: '…oken' }]
+  }
+  const settings = { ...SETTINGS, customSources: [existing] }
+  let tree = render(internals.CustomSourcesForm, {
+    settings, t, onSave: async (patch) => { saved = patch }, onDelete: async () => {}
+  })
+  const tab = findAll(tree, (element) => element.props?.className === 'dsu-tab').find((element) => treeText(element) === 'Example balance')
+  tab.props.onClick()
+  tree = render(internals.CustomSourcesForm, {
+    settings, t, onSave: async (patch) => { saved = patch }, onDelete: async () => {}
+  })
+  ok(treeText(tree).includes('Authorization: …oken'), treeText(tree))
+  const save = find(tree, (element) => element.type === 'button' && treeText(element).includes('保存数据源'))
+  await save.props.onClick()
+  await flush(2)
+  equal(saved.id, 'custom-abcd1234')
+  equal('headers' in saved, false, 'blank header box keeps the stored ones')
+})
+
+test('a new custom source sends parsed header lines', async () => {
+  resetHooks()
+  let saved
+  let tree = render(internals.CustomSourcesForm, {
+    settings: { ...SETTINGS, customSources: [] }, t, onSave: async (patch) => { saved = patch }, onDelete: async () => {}
+  })
+  const inputs = findAll(tree, (element) => element.type === 'input' && element.props.type === 'text')
+  const values = ['Example', 'data.balance', 'https://example.com/balance', 'CNY']
+  for (const [index, value] of values.entries()) {
+    inputs[index].props.onChange({ target: { value } })
+  }
+  const textarea = find(tree, (element) => element.type === 'textarea')
+  textarea.props.onChange({ target: { value: 'Authorization: Bearer abc\nX-Tenant: t1' } })
+  tree = render(internals.CustomSourcesForm, {
+    settings: { ...SETTINGS, customSources: [] }, t, onSave: async (patch) => { saved = patch }, onDelete: async () => {}
+  })
+  const save = find(tree, (element) => element.type === 'button' && treeText(element).includes('保存数据源'))
+  await save.props.onClick()
+  await flush(2)
+  equal(saved.name, 'Example')
+  deepEqual(saved.headers, [
+    { name: 'Authorization', value: 'Bearer abc' },
+    { name: 'X-Tenant', value: 't1' }
+  ])
+})
+
+test('deleting a custom source needs two clicks', async () => {
+  resetHooks()
+  let deleted
+  const existing = {
+    id: 'custom-abcd1234', name: 'Example', url: 'https://example.com', valuePath: 'a', currency: 'CNY', headers: []
+  }
+  const settings = { ...SETTINGS, customSources: [existing] }
+  let tree = render(internals.CustomSourcesForm, {
+    settings, t, onSave: async () => {}, onDelete: async (id) => { deleted = id }
+  })
+  findAll(tree, (element) => element.props?.className === 'dsu-tab').find((element) => treeText(element) === 'Example').props.onClick()
+  tree = render(internals.CustomSourcesForm, {
+    settings, t, onSave: async () => {}, onDelete: async (id) => { deleted = id }
+  })
+  const danger = find(tree, (element) => element.type === 'button' && element.props?.className === 'dsu-btn danger')
+  danger.props.onClick()
+  tree = render(internals.CustomSourcesForm, {
+    settings, t, onSave: async () => {}, onDelete: async (id) => { deleted = id }
+  })
+  find(tree, (element) => element.type === 'button' && element.props?.className === 'dsu-btn danger').props.onClick()
+  await flush(2)
+  equal(deleted, 'custom-abcd1234')
+})
+
+test('desktop alerts are sent once per service per day and never include credentials', () => {
+  const calls = []
+  class FakeNotification {
+    constructor(title, options) { calls.push({ title, options }) }
+  }
+  FakeNotification.permission = 'granted'
+  const store = new Map()
+  const storage = {
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => { store.set(key, value) }
+  }
+  const snapshot = snapshotFixture({
+    deepseek: deepseekCard({ alert: { threshold: 100, value: 40 } })
+  })
+  snapshot.settings = { ...snapshot.settings, alerts: { enabled: true, desktop: true, thresholds: { deepseek: 100 } } }
+  const options = { NotificationCtor: FakeNotification, storage, now: new Date('2026-11-11T08:00:00Z') }
+  equal(internals.notifyAlerts(snapshot, t, options), 1)
+  equal(internals.notifyAlerts(snapshot, t, options), 0)
+  equal(calls.length, 1)
+  ok(calls[0].title.includes('DeepSeek'), calls[0].title)
+  ok(calls[0].options.body.includes('40'), calls[0].options.body)
+  ok(!JSON.stringify(calls).includes('sk-'), 'no credential leaks')
+})
+
+test('desktop alerts respect the switch, permission and missing API', () => {
+  const snapshot = snapshotFixture({ deepseek: deepseekCard({ alert: { threshold: 100, value: 40 } }) })
+  const enabled = { ...snapshot, settings: { ...snapshot.settings, alerts: { enabled: true, desktop: false, thresholds: { deepseek: 100 } } } }
+  class Denied { constructor() {} }
+  Denied.permission = 'denied'
+  const storage = { getItem: () => null, setItem() {} }
+  equal(internals.notifyAlerts(enabled, t, { NotificationCtor: Denied, storage }), 0, 'desktop is off')
+  const on = { ...enabled, settings: { ...enabled.settings, alerts: { enabled: true, desktop: true, thresholds: { deepseek: 100 } } } }
+  equal(internals.notifyAlerts(on, t, { NotificationCtor: Denied, storage }), 0, 'permission denied')
+  equal(internals.notifyAlerts(on, t, { NotificationCtor: undefined, storage }), 0, 'API unavailable')
 })
 
 // ── page ────────────────────────────────────────────────────────────────────
@@ -675,6 +863,50 @@ test('opening the config panel from a card targets that service', async () => {
   const panel = find(ready, (element) => element.type === internals.ConfigPanel)
   ok(panel !== undefined, 'the config panel opens')
   equal(panel.props.initialService, 'minimax')
+})
+
+test('the page renders custom sources and opens their editor tab', async () => {
+  resetHooks()
+  context.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ ok: true, snapshot: snapshotFixture({ custom: customCard() }) })
+  })
+  render(internals.UsagePage, { t })
+  await flush()
+  let ready = render(internals.UsagePage, { t })
+  const custom = find(ready, (element) => element.type === internals.CustomCard)
+  ok(custom !== undefined, 'the custom card is rendered')
+  custom.props.onConfigure()
+  ready = render(internals.UsagePage, { t })
+  const panel = find(ready, (element) => element.type === internals.ConfigPanel)
+  equal(panel.props.initialService, 'custom')
+})
+
+test('a custom source API failure is isolated and explained', async () => {
+  resetHooks()
+  context.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      ok: true,
+      snapshot: snapshotFixture({
+        custom: customCard({
+          state: 'error',
+          source: 'none',
+          balance: null,
+          fetchedAt: null,
+          error: { code: 'custom-path', message: 'missing' }
+        })
+      })
+    })
+  })
+  render(internals.UsagePage, { t })
+  await flush()
+  const ready = render(internals.UsagePage, { t })
+  const custom = find(ready, (element) => element.type === internals.CustomCard)
+  equal(custom.props.card.error.code, 'custom-path')
+  ok(find(ready, (element) => element.type === internals.DeepSeekCard) !== undefined, 'the built-in cards still render')
 })
 
 test('opening the detail loads session statistics lazily', async () => {

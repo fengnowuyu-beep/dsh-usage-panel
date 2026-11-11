@@ -8,6 +8,7 @@ preview/vendor/
 .credentials*
 credentials*.json
 balance-cache.json
+custom-sources.json
 !examples/credentials.example.json
 .preview-cache/
 preview/.cache/

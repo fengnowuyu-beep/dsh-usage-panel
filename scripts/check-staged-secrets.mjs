@@ -29,6 +29,10 @@ const RULES = [
     pattern: /(?:AccessKeySecret|secretKey)\s*[:=]\s*['"](?!REPLACE|test-|fixture|example|your-)[^'"\s]{12,}['"]/gi
   },
   {
+    name: 'Authorization Bearer token',
+    pattern: /Authorization["'\s:=]+Bearer\s+(?!REPLACE|fixture|test-|example|your-)[A-Za-z0-9._~+/-]{20,}/gi
+  },
+  {
     name: 'Non-placeholder apiKey assignment',
     // Real provider keys are long; the threshold stays above the short fake
     // values the tests use (`sk-abcdefgh12345678` is 19 characters).

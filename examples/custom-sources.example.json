@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "updatedAt": 1794400000000,
+  "sources": [
+    {
+      "id": "custom-1234abcd",
+      "name": "Example balance",
+      "url": "https://api.example.com/balance",
+      "valuePath": "data.balance",
+      "currency": "CNY",
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer REPLACE-WITH-YOUR-TOKEN"
+        }
+      ]
+    }
+  ]
+}

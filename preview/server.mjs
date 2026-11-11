@@ -9,7 +9,7 @@
  *   node preview/server.mjs            # http://127.0.0.1:8791/?mode=live
  *   node preview/server.mjs --port=9000
  *
- * Modes: live | cached | unconfigured | error | no-ledger
+ * Modes: live | cached | unconfigured | error | no-ledger | custom | alert
  */
 import http from 'node:http'
 import { existsSync, readFileSync, statSync } from 'node:fs'
@@ -26,7 +26,7 @@ const argPort = process.argv.find((value) => value.startsWith('--port='))
 const port = Number(argPort?.slice('--port='.length) ?? process.env.PORT ?? 8791)
 
 /** The current preview state, chosen by the page's `?mode=` parameter. */
-const MODES = new Set(['live', 'cached', 'unconfigured', 'error', 'no-ledger'])
+const MODES = new Set(['live', 'cached', 'unconfigured', 'error', 'no-ledger', 'custom', 'alert'])
 let mode = 'live'
 
 const MIME = {
@@ -202,7 +202,34 @@ function buildSnapshot() {
     balance: !configured || mode === 'error' ? null : SAMPLE_ALIYUN
   }
 
-  const cards = [deepseek, minimax, aliyun]
+  const custom = {
+    id: 'custom-abcd1234',
+    name: '示例余额',
+    kind: 'custom',
+    state: 'live',
+    source: 'live',
+    fetchedAt: now,
+    error: null,
+    key: { configured: true, masked: '', source: 'file' },
+    custom: {
+      url: 'https://api.example.com/balance',
+      valuePath: 'data.balance',
+      currency: 'CNY',
+      headers: [{ name: 'Authorization', masked: '…oken' }]
+    },
+    balance: { value: 55.5, currency: 'CNY' }
+  }
+
+  const alertMode = mode === 'alert'
+  const customMode = mode === 'custom'
+  if (alertMode) {
+    deepseek.alert = { threshold: 200, value: 110 }
+    minimax.alert = { threshold: 80, value: 62 }
+    aliyun.alert = { threshold: 20000, value: 10000 }
+    custom.alert = { threshold: 100, value: 55.5 }
+  }
+
+  const cards = [deepseek, minimax, aliyun, ...(customMode || alertMode ? [custom] : [])]
   const counts = { live: 0, cached: 0, unconfigured: 0, error: 0, idle: 0 }
   for (const card of cards) {
     if (card.state === 'live') counts.live += 1
@@ -217,7 +244,7 @@ function buildSnapshot() {
     cards,
     ledger,
     summary: {
-      services: 3,
+      services: cards.length,
       ...counts,
       monthCost: ledgerSource.available ? ledgerSource.month.cost : null,
       todayCost: ledgerSource.available ? ledgerSource.today.cost : null,
@@ -250,6 +277,12 @@ function buildSnapshot() {
       },
       minimax: { region: 'cn', hasKey: configured, maskedKey: configured ? 'mm-…9b2c' : '', keySource: configured ? 'file' : 'none' },
       aliyun: { endpoint: 'business.aliyuncs.com', hasKey: configured, accessKeyIdMasked: configured ? 'LTAI…eyId' : '', keySource: configured ? 'file' : 'none' },
+      alerts: alertMode
+        ? { enabled: true, desktop: false, thresholds: { deepseek: 200, minimax: 80, aliyun: 20000, 'custom-abcd1234': 100 } }
+        : { enabled: true, desktop: false, thresholds: {} },
+      customSources: customMode || alertMode
+        ? [{ id: custom.id, name: custom.name, url: custom.custom.url, valuePath: custom.custom.valuePath, currency: 'CNY', headers: custom.custom.headers }]
+        : [],
       ledgerFile: displayFile,
       settingsFile: join(home, 'usage-panel', 'settings.json'),
       credentialsFile: join(home, 'usage-panel', 'credentials.json')

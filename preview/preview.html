@@ -53,13 +53,15 @@
 </head>
 <body>
   <div id="preview-banner">
-    <span><strong>本地预览</strong> · DeepSeek / MiniMax / 阿里云余额与会话行为示例数据，账本数字来自本机真实账本（除非选择「无账本」）</span>
+    <span><strong>本地预览</strong> · DeepSeek / MiniMax / 阿里云 / 自定义源余额与会话行为示例数据，账本数字来自本机真实账本（除非选择「无账本」）</span>
     <nav>
       <a href="/?mode=live">实时</a>
       <a href="/?mode=cached">缓存</a>
       <a href="/?mode=unconfigured">未配置</a>
       <a href="/?mode=error">异常</a>
       <a href="/?mode=no-ledger">无账本</a>
+      <a href="/?mode=custom">自定义源</a>
+      <a href="/?mode=alert">告警</a>
     </nav>
   </div>
   <div id="root"></div>
@@ -87,7 +89,7 @@
       internals.installStyles()
       const t = internals.readerOf((key, params) => internals.interpolate(internals.zh[key] ?? key, params))
       const params = new URLSearchParams(window.location.search)
-      if (params.get('panel') === 'config') {
+      if (['config', 'alerts', 'custom'].includes(params.get('panel'))) {
         // A direct view of the inline configuration form, for layout checks.
         const settings = {
           timeoutMs: 5000,
@@ -99,14 +101,30 @@
             savedAt: Date.now()
           },
           minimax: { region: 'cn', hasKey: true, maskedKey: 'mm-…9b2c', keySource: 'file' },
-          aliyun: { endpoint: 'business.aliyuncs.com', hasKey: true, accessKeyIdMasked: 'LTAI…eyId', keySource: 'file' }
+          aliyun: { endpoint: 'business.aliyuncs.com', hasKey: true, accessKeyIdMasked: 'LTAI…eyId', keySource: 'file' },
+          alerts: { enabled: true, desktop: false, thresholds: { deepseek: 200, minimax: 80, aliyun: 20000, 'custom-abcd1234': 100 } },
+          customSources: [
+            {
+              id: 'custom-abcd1234',
+              name: '示例余额',
+              url: 'https://api.example.com/balance',
+              valuePath: 'data.balance',
+              currency: 'CNY',
+              headers: [{ name: 'Authorization', masked: '…oken' }]
+            }
+          ]
         }
+        const requested = new URLSearchParams(location.search).get('panel')
+        const initialService = requested === 'custom' || requested === 'alerts' ? requested : 'deepseek'
         ReactDOM.render(React.createElement(internals.ConfigPanel, {
           settings,
-          initialService: 'deepseek',
+          initialService,
           t,
           onSave: async () => {},
           onClear: async () => {},
+          onSaveAlerts: async () => {},
+          onCustomSave: async () => {},
+          onCustomDelete: async () => {},
           onClose: () => {}
         }), document.getElementById('root'))
       } else {

@@ -5,5 +5,14 @@
   "timeoutMs": 5000,
   "currency": "CNY",
   "minimaxRegion": "cn",
-  "aliyunEndpoint": "business.aliyuncs.com"
+  "aliyunEndpoint": "business.aliyuncs.com",
+  "alerts": {
+    "enabled": true,
+    "desktop": false,
+    "thresholds": {
+      "deepseek": 20,
+      "minimax": 15,
+      "aliyun": 100
+    }
+  }
 }

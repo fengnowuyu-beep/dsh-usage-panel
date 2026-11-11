@@ -1,8 +1,8 @@
 # dsh-usage-panel 开发计划
 
 > 本文档是开发依据：**改代码之前先改这里**。代码、README、测试与本文冲突时，以本文为准。
-> 当前版本：0.2.0（P0 + P0.1 + P1）
-> 状态：P0 已完成；P0.1 已完成；P1 已完成（代码 + mock 测试；真实 API 未测）
+> 当前版本：0.3.0（P0 + P0.1 + P1 + P2）
+> 状态：P0 已完成；P0.1 已完成；P1 已完成（代码 + mock 测试；真实 API 未测）；P2 已完成（代码 + mock 测试；真实第三方接口/桌面通知未测）
 > 最后更新：2026-11-11
 
 ---
@@ -25,7 +25,7 @@
 | **P0** | DeepSeek 余额卡、本地账本卡、手动刷新 + 最后更新时间、Key 打码 + 测试连接、失败降级、实时/缓存/估算标记 | ✅ 已完成（0.1.0） |
 | **P0.1** | 布局调整：顶部跨服务汇总条；卡片区只放官方余额；账本明细收进默认收起的折叠面板；页脚写明口径差异 | ✅ 已完成（0.1.1） |
 | **P1** | MiniMax 订阅/余额卡、阿里云余额卡；接入后汇总条才覆盖全部服务；账本明细补「按会话」数据源（见 3.3 / 4.3） | ✅ 已完成（0.2.0；mock 测试，真实 API 未测） |
-| **P2** | 自定义数据源（URL + 请求头 + JSON 取值路径）、余额阈值告警（卡片标红 + 可选系统通知） | ⏳ 未开始 |
+| **P2** | 自定义数据源（URL + 请求头 + JSON 取值路径）、余额阈值告警（卡片标红 + 可选系统通知） | ✅ 已完成（0.3.0；mock 测试，真实第三方接口/桌面通知未测） |
 | **P3** | 同一服务多 Key 的分别用量、导出 CSV | ⏳ 未开始 |
 
 ### 1.3 本次调整的结论（2026-11-11 讨论）
@@ -184,10 +184,99 @@
 
 真实接口调用：**未测**（缺 MiniMax 订阅 Key / 阿里云 RAM AccessKey / DeepSeek 真实网络环境）。
 
-### 3.4 P2 / P3（未开始）
+### 3.4 P2（已完成，真实第三方接口/桌面通知未测）
 
-- P2：自定义数据源（URL + 请求头 + JSON 路径）、余额阈值告警；
-- P3：多 Key 分别统计、导出 CSV。
+> 设计日期：2026-11-11。先写测试与验收，再实现；真实系统通知需要真机验证，离线只验证调用契约。
+
+#### P2-a 自定义数据源
+
+用途：给没有现成适配器的服务手填 `URL + 请求头 + JSON 取值路径`。数据源配置存 Host 私有文件 `~/.dsh/usage-panel/custom-sources.json`（0600），因为请求头可能含 Token；页面只拿请求头**名称与掩码**，永远不拿明文。
+
+| 约束 | 规则 |
+| --- | --- |
+| 数量 | 最多 8 个 |
+| URL | 仅 `http` / `https`；不允许 URL 内嵌用户名/密码；不允许 `file:`/`javascript:`/`data:` |
+| 请求头 | 名称 `^[A-Za-z0-9-]{1,64}$`；值 ≤2048 字符且禁止 CR/LF；禁止 `host`/`content-length`/`connection`/`transfer-encoding` |
+| 请求 | GET；5 秒 deadline；单次只发一次、不重试；响应 JSON ≤1MB |
+| 取值 | 点号 + `[n]` 路径（如 `data.balance`、`items[0].amount`）；值必须是数字或可解析数字字符串；否则报错，不显示 0 |
+| 缓存 | 成功结果按（URL+headers+path+currency）指纹缓存；配置变更后旧缓存失效 |
+| 展示 | 独立卡片，主数字=取值，币种可配；来源/时间/缓存标记与内置卡一致 |
+
+离线测试（mock fetch + 临时 home）：
+
+| ID | 测什么 | 通过标准 |
+| --- | --- | --- |
+| CD-1 | 路径解析 | `data.balance`、`items[0].amount` 正确；缺失路径/非数字分别映射 `custom-path` / `custom-value` |
+| CD-2 | URL 校验 | `https/http` 通过；`file:`、`javascript:`、`data:`、带 `user:pass@`、空 host 拒绝（`invalid-custom-url`） |
+| CD-3 | 请求头校验 | 合法名/值通过；CRLF、非法名称、`Host` 等保留头、超长值拒绝（`invalid-custom-header`） |
+| CD-4 | fetch | 精确发送配置的 headers；401/403→`custom-auth`、429→`rate-limited`、5xx→`server-error`、超时→`timeout`；非 JSON→`bad-response` |
+| CD-5 | 保存/删除 | 新建生成 `custom-<8hex>`；最多 8 个；删除后卡片与缓存消失；保存不覆盖内置服务 |
+| CD-6 | 秘密 | 快照/错误/日志不出现 header 明文；配置接口只返回名称 + 掩码（如 `Bearer…abcd`） |
+| CD-7 | 刷新与隔离 | 刷新全部包含自定义源；自定义源失败不影响内置卡；有缓存时显示缓存 + 过期提示 |
+| CD-8 | UI | 自定义卡渲染名称/值/币种/来源；配置页可新增/编辑/删除；请求头编辑留空保持不变 |
+
+失败判定：header 明文进快照、URL 协议越界、非 JSON 被当成余额、5 秒未降级、配置保存覆盖内置凭据。
+
+#### P2-b 余额阈值告警
+
+设置存 `settings.json` 的 `alerts: { enabled, desktop, thresholds }`；阈值按服务 id（`deepseek`/`minimax`/`aliyun`/`custom:<id>`）配置，`0` 或未设置 = 不告警。
+
+| 指标 | 来源 |
+| --- | --- |
+| DeepSeek | `balance.total` |
+| MiniMax | `quota.primary.interval.remainingPercent` |
+| 阿里云 | `balance.available` |
+| 自定义 | 取值数字 |
+
+语义：**严格小于**阈值才告警（等于不告警）；只在该卡有值时判断；`enabled=false` 时一律不告警。卡片快照带 `alert: {threshold, value}`，前端加红色边框 +「低于阈值 {threshold}」标签。
+
+系统通知：客户端可选（默认关闭），使用浏览器/Electron 的 `Notification` API；一天内同一服务同一阈值只通知一次；API 不存在或被拒绝时静默回退为应用内标红。不引入外部通知依赖。
+
+离线测试：
+
+| ID | 测什么 | 通过标准 |
+| --- | --- | --- |
+| ALRT-1 | 阈值语义 | 值=阈值不告警；值<阈值告警；阈值 0/未设不告警；enabled=false 不告警 |
+| ALRT-2 | 指标 | 四个来源各自读对字段；无值时 `alert=null`，不误报 |
+| ALRT-3 | 快照 | `alert` 只含 threshold/value（不含任何 Key/header）；配置变更后立即反映 |
+| ALRT-4 | 客户端标红 | 有 alert 的卡带 `data-alert="true"` + 告警文案；无 alert 不带 |
+| ALRT-5 | 通知 | stub Notification：每天每服务每阈值只调用一次；desktop=false 不调用；API 缺失/拒绝不抛错；标题/正文不含凭证 |
+| ALRT-6 | 配置 | 阈值/开关可保存并持久化；非法值（负数/NaN/未知服务）拒绝 |
+
+失败判定：等于阈值误报、无值误报、通知重复或泄漏凭证、关闭开关后仍通知。
+
+#### P2-c 集成与回归
+
+| ID | 测什么 | 通过标准 |
+| --- | --- | --- |
+| P2-IN-1 | 卡片数量 | 内置 3 + 自定义 N；汇总服务数正确；自定义卡不影响账本口径 |
+| P2-IN-2 | 回归 | P0/P0.1/P1 全部用例继续通过；锁定 5 秒超时、打码、失败降级 |
+| P2-IN-3 | 安全 | 提交前 `check:secrets` 通过；custom-sources.json / 缓存被 `.gitignore` 排除；日志无明文 header |
+
+**实现与验收回填（2026-11-11，v0.3.0）**：
+
+| 用例组 | 结果 | 备注 |
+| --- | --- | --- |
+| CD-1…CD-8 | ✅ 通过 | 真实第三方接口 **未测** |
+| ALRT-1…ALRT-6 | ✅ 通过 | 真实桌面通知 **未测** |
+| P2-IN-1…3 | ✅ 通过 | 4 类卡共存、P0/P1 回归、秘密扫描 |
+| 回归 | ✅ Host 50 + P1 29 + P2 17 + Client 37 = 133 | `npm test` |
+
+实现说明：
+
+- 自定义源存 `~/.dsh/usage-panel/custom-sources.json`（0600，已 `.gitignore`），不走 `settings.json`；
+- 快照只暴露请求头名称 + 掩码；`custom.js` 只返回数值，不返回原始响应；
+- 阈值严格小于才告警；`0`/未设/关闭开关均不告警；
+- 桌面通知走浏览器/Electron `Notification`，一天一次，失败静默回退。
+
+真实接口调用：**未测**（缺 MiniMax 订阅 Key / 阿里云 RAM AccessKey / DeepSeek 真实网络环境 / 真机通知权限）。
+
+### 3.5 P3（未开始，设计后续写入）
+
+- **多 Key 分别统计**：同一服务支持多把 Key，分别展示余额/用量；多数 provider 没有按 Key 的用量接口，需要先确定能力矩阵，不能把总量硬拆给每把 Key。
+- **导出 CSV**：导出当前余额快照、账本按天/按模型、会话统计；需定义字段、编码（UTF-8 BOM）、文件落点与脱敏规则。
+
+---
 
 ---
 
@@ -229,12 +318,18 @@
 | P1-3 | 按会话统计（会话日志多帧 zstd + 内置定价） | P1 | ✅ 已完成（fixture 全绿；真实全量未测） |
 | P1-4 | 阿里云 BSS `QueryAccountBalance`（RAM 子账号 + HMAC-SHA1 签名） | P1 | ✅ 已完成（签名/解析 mock 全绿；真实 RAM 未测） |
 
-### 4.4 未开始
+### 4.4 已完成（P2）
 
 | ID | 任务 | 阶段 | 状态 |
 | --- | --- | --- | --- |
-| P2-1 | 自定义数据源 | P2 | ⏳ 未开始 |
-| P2-2 | 余额阈值告警 | P2 | ⏳ 未开始 |
+| P2-0 | P2 测试设计与可判定验收标准（写入 3.4） | P2 | ✅ 已完成（2026-11-11，先于代码） |
+| P2-1 | 自定义数据源（URL + 请求头 + JSON 路径，Host 私有存储） | P2 | ✅ 已完成（真实第三方接口未测） |
+| P2-2 | 余额阈值告警（卡片标红 + 可选系统通知） | P2 | ✅ 已完成（真实桌面通知未测） |
+
+### 4.5 未开始
+
+| ID | 任务 | 阶段 | 状态 |
+| --- | --- | --- | --- |
 | P3-1 | 多 Key 分别统计 | P3 | ⏳ 未开始 |
 | P3-2 | 导出 CSV | P3 | ⏳ 未开始 |
 
@@ -299,3 +394,21 @@
 **文档/预览**：README 同步；截图 `panel-live/details/error/unconfigured/config/cached`；预览支持 `&details=1`、`&panel=config`。
 
 **约束遵守**：未安装插件、未修改 profile、未动其它插件。
+
+### 2026-11-11 · v0.3.0（P2 完成）
+
+**实现**：
+
+- 自定义数据源：`lib/custom.js` 负责 URL/请求头/JSON 路径校验、数字提取、错误映射；`lib/config.js` 管理私有 `custom-sources.json`；最多 8 个。
+- Host 引擎：自定义源纳入 `snapshot.cards`、刷新/测试/缓存/告警；按（URL+headers+path+currency）指纹失效；单源失败不影响内置卡。
+- 告警：`lib/alerts.js` 严格小于阈值；`settings.alerts` 持久化 enabled/desktop/thresholds；卡片带 `alert`。
+- Client：自定义卡、告警文案、红色边框、五页签配置（三服务 + 告警 + 自定义源）、桌面通知（Notification API，一天一次、权限失败静默）。
+- 安全：请求头只存 Host 私有文件，快照仅名称+掩码；header 值不进日志/错误/README；保留头与 CRLF 拒绝。
+
+**测试**：Host 50/50、P1 29/29、P2 17/17、Client 37/37，共 133 条通过（`npm test`）。
+
+**真实接口**：自定义源真实第三方接口、桌面通知权限/弹出均 **未测**；DeepSeek/MiniMax/阿里云真实调用仍 **未测**。
+
+**文档/预览**：README 同步；新增 `panel-custom/alerts/config-alerts/config-custom` 截图；预览支持 `mode=custom|alert`、`panel=alerts|custom`。
+
+**约束遵守**：未安装插件、未修改 profile、未动其它插件；未使用真实 Key 调接口。
