@@ -1,7 +1,9 @@
 {
-  "version": 1,
+  "version": 2,
   "updatedAt": 1794400000000,
   "baseUrl": "https://api.deepseek.com",
   "timeoutMs": 5000,
-  "currency": "CNY"
+  "currency": "CNY",
+  "minimaxRegion": "cn",
+  "aliyunEndpoint": "business.aliyuncs.com"
 }

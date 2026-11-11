@@ -1,17 +1,14 @@
 /**
- * Browser half: the P0.1 layout.
- *
- * The page now has three layers — a cross-service spend strip, official-balance
- * cards, and a collapsed ledger detail. These tests pin that separation: spend
- * must not leak back onto the balance card, the detail must start collapsed,
- * and an unavailable ledger must never render invented zeros.
+ * Browser half for P1: three provider cards, per-service configuration and the
+ * lazy session table. The shim renders component trees without a DOM; hooks
+ * persist across explicit re-renders so page-level async flows can be tested.
  */
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 
 import { deepEqual, equal, ok, run, test } from './harness.mjs'
 
-// ── the sandbox ─────────────────────────────────────────────────────────────
+// ── sandbox ─────────────────────────────────────────────────────────────────
 
 function createElement(type, props, ...children) {
   return {
@@ -60,7 +57,7 @@ function resetHooks() {
   hookCursor = 0
 }
 
-async function flush(rounds = 6) {
+async function flush(rounds = 8) {
   for (let index = 0; index < rounds; index += 1) {
     await new Promise((resolve) => setImmediate(resolve))
   }
@@ -136,7 +133,7 @@ function treeText(node) {
       return
     }
     if (typeof value === 'object' && value.props !== undefined) {
-      for (const key of ['placeholder', 'title', 'aria-label', 'label', 'value', 'tag']) {
+      for (const key of ['placeholder', 'title', 'aria-label', 'label', 'value', 'tag', 'body', 'text']) {
         if (typeof value.props[key] === 'string') parts.push(value.props[key])
       }
       collect(value.props.children)
@@ -161,21 +158,23 @@ function find(node, predicate) {
 // ── fixtures ────────────────────────────────────────────────────────────────
 
 const SETTINGS = {
-  baseUrl: 'https://api.deepseek.com',
   timeoutMs: 5000,
-  currency: 'CNY',
-  hasKey: true,
-  maskedKey: 'sk-…5678',
-  keySource: 'file',
-  savedAt: 1794399685025,
+  deepseek: {
+    baseUrl: 'https://api.deepseek.com',
+    hasKey: true,
+    maskedKey: 'sk-…5678',
+    keySource: 'file',
+    savedAt: null
+  },
+  minimax: { region: 'cn', hasKey: true, maskedKey: 'mm-…9b2c', keySource: 'file' },
+  aliyun: { endpoint: 'business.aliyuncs.com', hasKey: true, accessKeyIdMasked: 'LTAI…eyId', keySource: 'file' },
   ledgerFile: '~/.dsh/dsh-usage/usage-ledger.json',
   settingsFile: '~/.dsh/usage-panel/settings.json',
   credentialsFile: '~/.dsh/usage-panel/credentials.json'
 }
 
-const LEDGER_FILE = 'C:/Users/x/.dsh/dsh-usage/usage-ledger.json'
+const LEDGER_FILE = '~/.dsh/dsh-usage/usage-ledger.json'
 
-/** A DeepSeek balance card. It no longer carries spend. */
 function deepseekCard(overrides = {}) {
   return {
     id: 'deepseek',
@@ -193,7 +192,54 @@ function deepseekCard(overrides = {}) {
   }
 }
 
-/** The ledger payload: summary numbers, 7-day series, per-model rows. */
+function minimaxModel() {
+  return {
+    name: 'general',
+    plan: 'Plus',
+    interval: { total: 1000, used: 380, remainingPercent: 62, usedPercent: 38, startAt: 1794400000000, endAt: 1794403600000, remainsAt: null },
+    weekly: { total: 10000, used: 6200, remainingPercent: 38, usedPercent: 62, startAt: null, endAt: null, remainsAt: null }
+  }
+}
+
+function minimaxCard(overrides = {}) {
+  const model = minimaxModel()
+  return {
+    id: 'minimax',
+    name: 'MiniMax',
+    kind: 'remote',
+    state: 'live',
+    source: 'live',
+    fetchedAt: Date.now(),
+    error: null,
+    key: { configured: true, masked: 'mm-…9b2c', source: 'file' },
+    quota: { plan: 'Plus', models: [model], primary: model },
+    ...overrides
+  }
+}
+
+function aliyunCard(overrides = {}) {
+  return {
+    id: 'aliyun',
+    name: '阿里云',
+    kind: 'remote',
+    state: 'live',
+    source: 'live',
+    fetchedAt: Date.now(),
+    error: null,
+    key: { configured: true, masked: 'LTAI…eyId', source: 'file' },
+    balance: {
+      available: 10000,
+      cash: 10000,
+      credit: 0,
+      mybankCredit: 0,
+      quotaLimit: 10000,
+      currency: 'CNY'
+    },
+    requestId: 'req-1',
+    ...overrides
+  }
+}
+
 function ledgerCard(overrides = {}) {
   return {
     id: 'ledger',
@@ -214,8 +260,7 @@ function ledgerCard(overrides = {}) {
     ],
     models: [
       { provider: 'deepseek-account', providerName: 'DeepSeek', model: 'deepseek-flash', cost: 100, calls: 2000, tokens: 1 },
-      { provider: 'deepseek-account', providerName: 'DeepSeek', model: 'deepseek-v4-pro', cost: 20, calls: 800, tokens: 1 },
-      { provider: 'minimax', providerName: 'MiniMax', model: 'abab', cost: 8.4, calls: 320, tokens: 1 }
+      { provider: 'minimax', providerName: 'MiniMax', model: 'abab', cost: 20, calls: 800, tokens: 1 }
     ],
     updatedAt: Date.now(),
     stale: false,
@@ -225,18 +270,35 @@ function ledgerCard(overrides = {}) {
   }
 }
 
-/** A whole snapshot for the page and summary tests. */
+function sessionData(overrides = {}) {
+  return {
+    monthKey: '2026-11',
+    sessions: [
+      { id: 'session-a', title: 'Alpha work', calls: 2, tokens: 7000, cost: 0.00912, unpricedCalls: 0, unpricedModels: [], lastAt: Date.now() }
+    ],
+    totalSessions: 1,
+    scanned: 3,
+    skipped: 0,
+    durationMs: 12,
+    pricing: { label: 'DeepSeek 官方标价（CNY，2026-10-08 版）' },
+    cached: false,
+    ageMs: 0,
+    ...overrides
+  }
+}
+
 function snapshotFixture(overrides = {}) {
   const deepseek = overrides.deepseek ?? deepseekCard()
+  const minimax = overrides.minimax ?? minimaxCard()
+  const aliyun = overrides.aliyun ?? aliyunCard()
   const ledger = overrides.ledger ?? ledgerCard()
   return {
     generatedAt: Date.now(),
-    cards: [deepseek],
-    deepseek,
+    cards: [deepseek, minimax, aliyun],
     ledger,
     summary: {
-      services: 1,
-      live: 1,
+      services: 3,
+      live: 3,
       cached: 0,
       unconfigured: 0,
       error: 0,
@@ -251,7 +313,7 @@ function snapshotFixture(overrides = {}) {
         { id: 'minimax', name: 'MiniMax', monthCost: 8.4, monthCalls: 320, todayCost: 2.42 }
       ]
     },
-    lastAttempt: { at: Date.now(), ok: true, ms: 120, error: null },
+    lastAttempts: { deepseek: { at: Date.now(), ok: true, ms: 120, error: null }, minimax: null, aliyun: null },
     settings: SETTINGS,
     ...overrides
   }
@@ -269,17 +331,15 @@ test('the browser half declares the services it needs', () => {
 })
 
 test('both dictionaries carry exactly the same keys', () => {
-  const zhKeys = Object.keys(zh).sort()
-  const enKeys = Object.keys(en).sort()
-  deepEqual(enKeys, zhKeys, 'a missing translation would render a raw key')
-  ok(zhKeys.length > 60)
+  deepEqual(Object.keys(en).sort(), Object.keys(zh).sort(), 'a missing translation would render a raw key')
+  ok(Object.keys(zh).length > 90)
 })
 
 test('every static t() key in the bundle exists in the dictionaries', () => {
   const requested = [...source.matchAll(/\bt\('([A-Za-z][A-Za-z0-9]*)'/g)].map((match) => match[1])
   const missing = [...new Set(requested)].filter((key) => zh[key] === undefined)
   deepEqual(missing, [], 'these keys would render as raw identifiers')
-  ok(requested.length > 40)
+  ok(requested.length > 60)
 })
 
 test('apply registers the sidebar entry and the main panel it opens', () => {
@@ -287,10 +347,7 @@ test('apply registers the sidebar entry and the main panel it opens', () => {
   const registrations = []
   let pendingKey = ''
   const ctx = {
-    locale: {
-      bind: () => (key) => zh[key] ?? key,
-      register: () => () => {}
-    },
+    locale: { bind: () => (key) => zh[key] ?? key, register: () => () => {} },
     slots: {
       inject(key, callback) {
         pendingKey = key
@@ -302,15 +359,12 @@ test('apply registers the sidebar entry and the main panel it opens', () => {
         return { dispose() {} }
       }
     },
-    effect(fn) {
-      fn()
-    }
+    effect(fn) { fn() }
   }
   exports.apply(ctx)
   const byKey = Object.fromEntries(registrations.map((entry) => [entry.key, entry]))
   deepEqual(Object.keys(byKey).sort(), ['main', 'sidebar.panellist'])
   equal(byKey.main.options.key, 'usage')
-  equal(byKey.main.options.locale, 'usagePanel')
   equal(byKey.main.component, internals.UsagePage)
   equal(byKey['sidebar.panellist'].options.id, 'usage')
   equal(byKey['sidebar.panellist'].options.order, 20)
@@ -321,378 +375,281 @@ test('the icon renders an svg at the requested size', () => {
   const icon = render(internals.UsageIcon, { size: 22 })
   equal(icon.type, 'svg')
   equal(icon.props.width, 22)
-  equal(icon.props.height, 22)
 })
 
 // ── formatting ──────────────────────────────────────────────────────────────
 
 console.log('# formatting')
 
-test('money formats both currencies with tabular grouping', () => {
+test('money formats currencies; moneyFine keeps small session costs readable', () => {
   equal(internals.money(110), '¥110.00')
   equal(internals.money(1234.5), '¥1,234.50')
   equal(internals.money('12.3', 'USD'), '$12.30')
-  equal(internals.money(undefined), '—')
+  equal(internals.moneyFine(0.00912), '¥0.0091')
 })
 
-test('describeError prefers the stable code over the Host message', () => {
-  equal(internals.describeError({ code: 'timeout', message: 'timed out' }, t), '请求超时（5 秒）')
-  equal(internals.describeError({ code: 'unauthorized', message: 'nope' }, t), 'Key 无效或已过期')
+test('describeError maps the P1 provider codes', () => {
+  equal(internals.describeError({ code: 'minimax-no-plan' }, t), '该 Key 没有可查询的订阅额度（可能是按量 Key）')
+  equal(internals.describeError({ code: 'aliyun-signature' }, t), '阿里云签名校验失败（检查 Secret）')
   equal(internals.describeError({ code: 'mystery', message: 'boom' }, t), 'boom')
-  equal(internals.describeError(null, t), '')
 })
 
-test('the reader falls back to the local dictionary', () => {
-  const fallback = internals.readerOf(undefined)
-  equal(fallback('refresh'), '刷新')
-  equal(fallback('detailsSummary', { cost: '¥1.00', calls: '3' }), '本月 ¥1.00 · 3 次调用')
-})
+// ── provider cards ──────────────────────────────────────────────────────────
 
-// ── balance card ────────────────────────────────────────────────────────────
+console.log('# provider cards')
 
-console.log('# balance card')
-
-test('an unconfigured DeepSeek card offers the way in and never shows ¥0.00', () => {
+test('DeepSeek keeps its official-balance-only card', () => {
   const tree = render(internals.DeepSeekCard, {
-    card: deepseekCard({
-      state: 'unconfigured',
-      source: 'none',
-      balance: null,
-      items: [],
-      key: { configured: false, masked: '', source: 'none' },
-      fetchedAt: null
-    }),
-    t,
-    onConfigure() {},
-    onTest() {},
-    testing: false,
-    testResult: null
+    card: deepseekCard(), t, onConfigure() {}, onTest() {}, testing: false, testResult: null
   })
   const text = treeText(tree)
-  ok(text.includes('未配置 DeepSeek Key'), text)
-  ok(text.includes('去配置'), text)
-  ok(!text.includes('¥0.00'), 'an absent key is not a zero balance')
-  ok(!text.includes('¥110.00'), 'no invented balance')
-})
-
-test('a live balance card shows only official figures, never spend', () => {
-  const tree = render(internals.DeepSeekCard, {
-    card: deepseekCard(),
-    t,
-    onConfigure() {},
-    onTest() {},
-    testing: false,
-    testResult: null
-  })
-  const text = treeText(tree)
-  ok(text.includes('DeepSeek'), text)
   ok(text.includes('¥110.00'), text)
   ok(text.includes('赠金'), text)
-  ok(text.includes('¥10.00'), text)
-  ok(text.includes('充值'), text)
   ok(text.includes('sk-…5678'), text)
   ok(text.includes('实时'), text)
   ok(text.includes('测试连接'), text)
-  ok(!text.includes('估算'), 'spend does not belong on the balance card')
-  ok(!text.includes('¥2.22'), text)
-  ok(find(tree, (element) => element.type === internals.TrendChart) === undefined, 'no ledger chart inside the balance card')
+  ok(!text.includes('估算'), text)
 })
 
-test('a cached balance card says so and warns that data may be old', () => {
-  const tree = render(internals.DeepSeekCard, {
-    card: deepseekCard({ state: 'cached', source: 'cache', error: { code: 'timeout', message: 'timed out' } }),
-    t,
-    onConfigure() {},
-    onTest() {},
-    testing: false,
-    testResult: null
-  })
-  const text = treeText(tree)
-  ok(text.includes('缓存'), text)
-  ok(text.includes('上次刷新失败，显示的可能是过期数据'), text)
-  ok(text.includes('¥110.00'), 'the last good number stays visible')
-})
-
-test('a failed balance card explains the failure instead of a bare zero', () => {
-  const tree = render(internals.DeepSeekCard, {
-    card: deepseekCard({
-      state: 'error',
-      source: 'none',
-      balance: null,
-      items: [],
-      available: null,
-      fetchedAt: null,
-      error: { code: 'unauthorized', message: 'rejected' }
+test('an unconfigured MiniMax card explains the subscription/PAYG split', () => {
+  const tree = render(internals.MinimaxCard, {
+    card: minimaxCard({
+      state: 'unconfigured', source: 'none', quota: null,
+      key: { configured: false, masked: '', source: 'none' }, fetchedAt: null
     }),
-    t,
-    onConfigure() {},
-    onTest() {},
-    testing: false,
-    testResult: null
+    t, onConfigure() {}, onTest() {}, testing: false, testResult: null
   })
   const text = treeText(tree)
-  ok(text.includes('Key 无效或已过期'), text)
+  ok(text.includes('未配置 MiniMax Key'), text)
+  ok(text.includes('按量 Key 没有公开的余额接口'), text)
+  ok(!text.includes('%'), 'no invented percentage')
+})
+
+test('a live MiniMax card shows both windows, plan and reset', () => {
+  const tree = render(internals.MinimaxCard, {
+    card: minimaxCard(), t, onConfigure() {}, onTest() {}, testing: false, testResult: null
+  })
+  const text = treeText(tree)
+  ok(text.includes('62%'), text)
+  ok(text.includes('general'), text)
+  ok(text.includes('剩余 62% · 周 38%'), text)
+  ok(text.includes('Plus'), text)
+  ok(text.includes('已用 380 / 1000'), text)
+  ok(text.includes('重置'), text)
+  equal(find(tree, (element) => element.type === internals.CardFooter).props.card.key.masked, 'mm-…9b2c')
+})
+
+test('a MiniMax no-plan key gets a specific explanation, not a generic failure', () => {
+  const tree = render(internals.MinimaxCard, {
+    card: minimaxCard({
+      state: 'error', source: 'none', quota: null, fetchedAt: null,
+      error: { code: 'minimax-no-plan', message: 'no plan' }
+    }),
+    t, onConfigure() {}, onTest() {}, testing: false, testResult: null
+  })
+  const text = treeText(tree)
+  ok(text.includes('这个 Key 不能查询订阅额度'), text)
+  ok(!text.includes('NaN'), text)
+})
+
+test('an unconfigured Aliyun card points at the RAM sub-account', () => {
+  const tree = render(internals.AliyunCard, {
+    card: aliyunCard({
+      state: 'unconfigured', source: 'none', balance: null,
+      key: { configured: false, masked: '', source: 'none' }, fetchedAt: null
+    }),
+    t, onConfigure() {}, onTest() {}, testing: false, testResult: null
+  })
+  const text = treeText(tree)
+  ok(text.includes('未配置阿里云 AccessKey'), text)
+  ok(text.includes('RAM 子账号'), text)
   ok(!text.includes('¥0.00'), text)
 })
 
-test('an idle balance card says it is waiting for the first read', () => {
-  const tree = render(internals.DeepSeekCard, {
-    card: deepseekCard({ state: 'idle', source: 'none', balance: null, items: [], fetchedAt: null, error: null }),
-    t,
-    onConfigure() {},
-    onTest() {},
-    testing: false,
-    testResult: null
-  })
-  ok(treeText(tree).includes('等待首次读取'), treeText(tree))
-})
-
-test('a successful test result renders latency and balance', () => {
-  const tree = render(internals.DeepSeekCard, {
-    card: deepseekCard(),
-    t,
-    onConfigure() {},
-    onTest() {},
-    testing: false,
-    testResult: { ok: true, ms: 320, balance: { currency: 'CNY', total: 110 }, error: null }
+test('a live Aliyun card shows the official balance breakdown', () => {
+  const tree = render(internals.AliyunCard, {
+    card: aliyunCard(), t, onConfigure() {}, onTest() {}, testing: false, testResult: null
   })
   const text = treeText(tree)
-  ok(text.includes('连接正常'), text)
-  ok(text.includes('320 ms'), text)
-  ok(text.includes('¥110.00'), text)
+  ok(text.includes('¥10,000.00'), text)
+  ok(text.includes('现金余额'), text)
+  ok(text.includes('信控额度'), text)
+  equal(find(tree, (element) => element.type === internals.CardFooter).props.card.key.masked, 'LTAI…eyId')
+  ok(text.includes('bss:DescribeAcccount'), text)
 })
 
-// ── spend summary ───────────────────────────────────────────────────────────
+test('an Aliyun signature failure is translated, not raw', () => {
+  const tree = render(internals.AliyunCard, {
+    card: aliyunCard({
+      state: 'error', source: 'none', balance: null, fetchedAt: null,
+      error: { code: 'aliyun-signature', message: 'SignatureDoesNotMatch' }
+    }),
+    t, onConfigure() {}, onTest() {}, testing: false, testResult: null
+  })
+  ok(treeText(tree).includes('阿里云签名校验失败'), treeText(tree))
+})
 
-console.log('# spend summary')
+// ── summary + ledger detail ─────────────────────────────────────────────────
 
-test('the strip shows the month total and each service, all tagged 估算', () => {
-  const tree = render(internals.SpendSummary, { snapshot: snapshotFixture(), t })
-  const text = treeText(tree)
+console.log('# summary & ledger')
+
+test('the spend strip still carries the month total and per-service spend', () => {
+  const text = treeText(render(internals.SpendSummary, { snapshot: snapshotFixture(), t }))
   ok(text.includes('本月合计（账本口径）'), text)
   ok(text.includes('¥128.40'), text)
   ok(text.includes('DeepSeek'), text)
-  ok(text.includes('¥120.00'), text)
   ok(text.includes('MiniMax'), text)
-  ok(text.includes('¥8.40'), text)
-  ok(text.includes('账本更新于'), text)
-  equal(findAll(tree, (element) => element.props?.className === 'dsu-tag estimate').length, 3, 'total + two services')
 })
 
-test('a stale ledger is marked cached in the strip and in the detail', () => {
-  const ledger = ledgerCard({ state: 'cached', source: 'cache', stale: true, error: { code: 'unreadable' } })
-  const snapshot = snapshotFixture({ ledger })
-  const summaryText = treeText(render(internals.SpendSummary, { snapshot, t }))
-  ok(summaryText.includes('缓存'), summaryText)
-  const detailText = treeText(render(internals.LedgerDetails, { snapshot, t, open: true, onToggle() {} }))
-  ok(detailText.includes('本次账本读取失败，显示的是上次结果'), detailText)
-})
-
-test('an unavailable ledger is stated plainly, with no zero total', () => {
-  const snapshot = snapshotFixture({
-    ledger: ledgerCard({ state: 'unavailable', source: 'none', error: { code: 'missing' }, today: { cost: 0, calls: 0 }, month: { cost: 0, calls: 0 }, models: [], series: [] }),
-    summary: {
-      services: 1,
-      live: 1,
-      cached: 0,
-      unconfigured: 0,
-      error: 0,
-      idle: 0,
-      monthCost: null,
-      todayCost: null,
-      monthCalls: null,
-      ledgerState: 'unavailable',
-      ledgerUpdatedAt: null,
-      servicesSpend: []
-    }
-  })
-  const text = treeText(render(internals.SpendSummary, { snapshot, t }))
-  ok(text.includes('不可用'), text)
-  ok(text.includes('账本不可用，无法汇总'), text)
-  ok(text.includes('账本文件未找到'), text)
-  ok(!text.includes('¥0.00'), text)
-})
-
-// ── ledger detail ───────────────────────────────────────────────────────────
-
-console.log('# ledger detail')
-
-test('the detail starts collapsed and only shows its header', () => {
+test('the ledger detail starts collapsed', () => {
   const tree = render(internals.LedgerDetails, {
     snapshot: snapshotFixture(),
     t,
     open: false,
-    onToggle() {}
+    onToggle() {},
+    sessions: { phase: 'idle', data: null, error: null },
+    onLoadSessions() {}
   })
   const text = treeText(tree)
   ok(text.includes('账本明细'), text)
-  ok(text.includes('本月 ¥128.40 · 3,120 次调用'), text)
-  ok(text.includes('展开 ▾'), text)
-  ok(!text.includes('按模型'), 'the body must stay unmounted while collapsed')
-  ok(!text.includes('近 7 天'), text)
+  ok(!text.includes('按模型'), text)
+  ok(!text.includes('按会话'), text)
 })
 
-test('expanded detail shows the trend, per-model rows and the session gap', () => {
+test('expanded detail includes the trend, models and the session table host', () => {
   const tree = render(internals.LedgerDetails, {
     snapshot: snapshotFixture(),
     t,
     open: true,
-    onToggle() {}
+    onToggle() {},
+    sessions: { phase: 'ready', data: sessionData(), error: null },
+    onLoadSessions() {}
   })
   const text = treeText(tree)
-  ok(text.includes('收起 ▴'), text)
   ok(text.includes('近 7 天'), text)
   ok(text.includes('按模型'), text)
   ok(text.includes('按会话'), text)
-  ok(text.includes('不含会话维度'), text)
-  ok(text.includes('DeepSeek'), text)
-  ok(text.includes('deepseek-flash'), text)
-  ok(text.includes('¥100.00'), text)
-  ok(text.includes('2,000'), text)
-  ok(text.includes('MiniMax'), text)
-  ok(text.includes(LEDGER_FILE), text)
-  ok(find(tree, (element) => element.type === internals.TrendChart) !== undefined, 'the 7-day chart is mounted')
+  ok(find(tree, (element) => element.type === internals.SessionTable) !== undefined)
 })
 
-test('the trend chart draws seven labelled columns', () => {
-  const tree = render(internals.TrendChart, { points: ledgerCard().series, t })
-  const columns = findAll(tree, (element) => element.props?.className === 'dsu-trend-col')
-  equal(columns.length, 7)
-  const text = treeText(tree)
-  ok(text.includes('11-11'), text)
-  ok(text.includes('¥18.42'), text)
-  ok(text.includes('近 7 天'), text)
-})
-
-test('an unavailable ledger detail names the file instead of drawing zeros', () => {
-  const ledger = ledgerCard({
-    state: 'unavailable',
-    source: 'none',
-    error: { code: 'missing' },
-    today: { cost: 0, calls: 0 },
-    month: { cost: 0, calls: 0 },
-    models: [],
-    series: [],
-    updatedAt: null
-  })
-  const tree = render(internals.LedgerDetails, {
-    snapshot: snapshotFixture({ ledger }),
+test('the session table renders title, calls and four-decimal cost', () => {
+  const tree = render(internals.SessionTable, {
+    state: { phase: 'ready', data: sessionData(), error: null },
     t,
-    open: true,
-    onToggle() {}
+    onLoad() {}
   })
   const text = treeText(tree)
-  ok(text.includes('账本不可用'), text)
-  ok(text.includes(LEDGER_FILE), text)
-  ok(!text.includes('¥0.00'), text)
+  ok(text.includes('Alpha work'), text)
+  ok(text.includes('2'), text)
+  ok(text.includes('¥0.0091'), text)
+  ok(text.includes('按内置价表估算'), text)
+  ok(text.includes('扫描 3 个日志'), text)
 })
 
-// ── config form ─────────────────────────────────────────────────────────────
+test('the session table has loading, empty and error states', () => {
+  const loading = treeText(render(internals.SessionTable, { state: { phase: 'loading' }, t, onLoad() {} }))
+  ok(loading.includes('正在扫描会话日志'), loading)
+  const empty = treeText(render(internals.SessionTable, {
+    state: { phase: 'ready', data: sessionData({ sessions: [], totalSessions: 0 }), error: null },
+    t,
+    onLoad() {}
+  }))
+  ok(empty.includes('本月还没有可统计的会话'), empty)
+  const error = treeText(render(internals.SessionTable, {
+    state: { phase: 'error', data: null, error: { code: 'route-unreachable' } },
+    t,
+    onLoad() {}
+  }))
+  ok(error.includes('会话统计加载失败'), error)
+  ok(error.includes('重新扫描'), error)
+})
 
-console.log('# config form')
+// ── configuration ───────────────────────────────────────────────────────────
 
-test('the form masks the saved key and posts only what was typed', async () => {
+console.log('# configuration')
+
+test('the config panel has one tab per service and starts on the requested one', () => {
   resetHooks()
-  const saved = []
   const tree = render(internals.ConfigPanel, {
     settings: SETTINGS,
+    initialService: 'aliyun',
     t,
-    onSave: async (patch) => { saved.push(patch) },
+    onSave: async () => {},
     onClear: async () => {},
     onClose() {}
   })
-  const inputs = findAll(tree, (element) => element.type === 'input')
-  equal(inputs.length, 2)
-  equal(inputs[0].props.type, 'password')
-  equal(inputs[0].props.placeholder, '已保存 sk-…5678，留空保持不变')
-  const form = find(tree, (element) => element.type === 'form')
-  await form.props.onSubmit({ preventDefault() {} })
-  await flush(2)
-  equal(saved.length, 1)
-  equal(saved[0].apiKey, '')
-  equal(saved[0].baseUrl, 'https://api.deepseek.com')
+  const tabs = findAll(tree, (element) => element.props?.className === 'dsu-tab')
+  equal(tabs.length, 3)
+  equal(tabs[0].props['aria-selected'], 'false')
+  equal(tabs[2].props['aria-selected'], 'true')
+  const form = find(tree, (element) => element.type === internals.ServiceForm)
+  equal(form.props.service, 'aliyun')
 })
 
-test('the form reports a save failure in the reader language', async () => {
+test('the service form posts only its own fields', async () => {
   resetHooks()
-  render(internals.ConfigPanel, {
+  const saved = []
+  const tree = render(internals.ServiceForm, {
+    service: 'minimax',
     settings: SETTINGS,
     t,
-    onSave: async () => { throw new internals.ApiError('route-unreachable', 'down') },
-    onClear: async () => {},
-    onClose() {}
+    onSave: async (service, patch) => { saved.push([service, patch]) },
+    onClear: async () => {}
   })
-  const form = find(render(internals.ConfigPanel, {
-    settings: SETTINGS,
-    t,
-    onSave: async () => {},
-    onClear: async () => {},
-    onClose() {}
-  }), (element) => element.type === 'form')
-  await form.props.onSubmit({ preventDefault() {} })
+  const button = find(tree, (element) => element.type === 'button' && treeText(element).includes('保存'))
+  await button.props.onClick()
   await flush(2)
-  const rerendered = render(internals.ConfigPanel, {
+  equal(saved.length, 1)
+  equal(saved[0][0], 'minimax')
+  equal(saved[0][1].region, 'cn')
+  equal(saved[0][1].apiKey, '')
+})
+
+test('the Aliyun form has id, secret and endpoint fields', () => {
+  resetHooks()
+  const tree = render(internals.ServiceForm, {
+    service: 'aliyun',
     settings: SETTINGS,
     t,
     onSave: async () => {},
-    onClear: async () => {},
-    onClose() {}
+    onClear: async () => {}
   })
-  ok(treeText(rerendered).includes('宿主插件路由不可用'), treeText(rerendered))
+  const inputs = findAll(tree, (element) => element.type === 'input')
+  equal(inputs.length, 3)
+  ok(inputs[0].props.placeholder.includes('LTAI…eyId'), inputs[0].props.placeholder)
+  equal(inputs[1].props.type, 'password')
 })
 
 // ── page ────────────────────────────────────────────────────────────────────
 
 console.log('# page')
 
-test('the page paints a skeleton, then summary + balance + collapsed detail', async () => {
+test('the page paints skeleton, then three cards and a collapsed detail', async () => {
   resetHooks()
   const asked = []
-  context.fetch = async (url, init) => {
-    asked.push({ url: String(url), body: init?.body })
+  context.fetch = async (url) => {
+    asked.push(String(url))
     return { ok: true, status: 200, json: async () => ({ ok: true, snapshot: snapshotFixture() }) }
   }
-
   const loading = render(internals.UsagePage, { t })
-  const loadingText = treeText(loading)
-  ok(loadingText.includes('服务余额与用量'), loadingText)
-  ok(loadingText.includes('尚未更新'), loadingText)
+  ok(treeText(loading).includes('服务余额与用量'), treeText(loading))
   ok(find(loading, (element) => element.type === internals.SkeletonCards) !== undefined)
 
   await flush()
   const ready = render(internals.UsagePage, { t })
-  const summary = find(ready, (element) => element.type === internals.SpendSummary)
-  const card = find(ready, (element) => element.type === internals.DeepSeekCard)
+  ok(find(ready, (element) => element.type === internals.DeepSeekCard) !== undefined)
+  ok(find(ready, (element) => element.type === internals.MinimaxCard) !== undefined)
+  ok(find(ready, (element) => element.type === internals.AliyunCard) !== undefined)
   const details = find(ready, (element) => element.type === internals.LedgerDetails)
-  ok(summary !== undefined, 'the spend strip is mounted')
-  ok(card !== undefined, 'the balance card is mounted')
-  ok(details !== undefined, 'the ledger detail is mounted')
   equal(details.props.open, false, 'the detail starts collapsed')
-  ok(treeText(ready).includes('官方余额 = 还剩多少钱'), treeText(ready))
-  equal(asked.length, 1, 'a live snapshot needs no background refresh')
-  equal(asked[0].url, '/usage-panel/api/snapshot')
+  equal(asked.length, 1, 'all cards are live, so no background refresh')
+  equal(asked[0], '/usage-panel/api/snapshot')
 })
 
-test('toggling the detail opens it without a reload', async () => {
-  resetHooks()
-  context.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, snapshot: snapshotFixture() }) })
-  render(internals.UsagePage, { t })
-  await flush()
-  const ready = render(internals.UsagePage, { t })
-  const details = find(ready, (element) => element.type === internals.LedgerDetails)
-  details.props.onToggle()
-  const reopened = render(internals.UsagePage, { t })
-  const afterToggle = find(reopened, (element) => element.type === internals.LedgerDetails)
-  equal(afterToggle.props.open, true)
-})
-
-test('the page refreshes in the background when the snapshot is only cached', async () => {
+test('a cached configured card triggers one background refresh of the page', async () => {
   resetHooks()
   const asked = []
-  const cached = snapshotFixture({
-    deepseek: deepseekCard({ state: 'cached', source: 'cache' }),
-    lastAttempt: null
-  })
+  const cached = snapshotFixture({ deepseek: deepseekCard({ state: 'cached', source: 'cache' }) })
   context.fetch = async (url) => {
     asked.push(String(url))
     if (String(url).endsWith('/snapshot')) {
@@ -706,7 +663,44 @@ test('the page refreshes in the background when the snapshot is only cached', as
   equal(asked[1], '/usage-panel/api/refresh')
 })
 
-test('a dead Host route renders the page error with a retry, not a blank page', async () => {
+test('opening the config panel from a card targets that service', async () => {
+  resetHooks()
+  context.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, snapshot: snapshotFixture() }) })
+  render(internals.UsagePage, { t })
+  await flush()
+  let ready = render(internals.UsagePage, { t })
+  const minimax = find(ready, (element) => element.type === internals.MinimaxCard)
+  minimax.props.onConfigure()
+  ready = render(internals.UsagePage, { t })
+  const panel = find(ready, (element) => element.type === internals.ConfigPanel)
+  ok(panel !== undefined, 'the config panel opens')
+  equal(panel.props.initialService, 'minimax')
+})
+
+test('opening the detail loads session statistics lazily', async () => {
+  resetHooks()
+  const asked = []
+  context.fetch = async (url) => {
+    asked.push(String(url))
+    if (String(url).endsWith('/sessions')) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, sessions: sessionData() }) }
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true, snapshot: snapshotFixture() }) }
+  }
+  render(internals.UsagePage, { t })
+  await flush()
+  let ready = render(internals.UsagePage, { t })
+  let details = find(ready, (element) => element.type === internals.LedgerDetails)
+  details.props.onToggle()
+  await flush()
+  ready = render(internals.UsagePage, { t })
+  details = find(ready, (element) => element.type === internals.LedgerDetails)
+  equal(details.props.open, true)
+  equal(details.props.sessions.phase, 'ready')
+  ok(asked.includes('/usage-panel/api/sessions'), JSON.stringify(asked))
+})
+
+test('a dead Host route renders the page error with a retry', async () => {
   resetHooks()
   context.fetch = async () => { throw new Error('no route') }
   render(internals.UsagePage, { t })

@@ -26,7 +26,7 @@ const RULES = [
   },
   {
     name: 'Aliyun AccessKey secret assignment',
-    pattern: /AccessKeySecret\s*[:=]\s*['"][^'"\s]{12,}['"]/gi
+    pattern: /(?:AccessKeySecret|secretKey)\s*[:=]\s*['"](?!REPLACE|test-|fixture|example|your-)[^'"\s]{12,}['"]/gi
   },
   {
     name: 'Non-placeholder apiKey assignment',

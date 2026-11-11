@@ -18,6 +18,7 @@ import {
   credentialsPath,
   keyFingerprint,
   loadBalanceCache,
+  loadProviderCache,
   loadCredentials,
   loadSettings,
   maskKey,
@@ -424,27 +425,36 @@ function makePanel(home, options = {}) {
   })
 }
 
+/** @returns the card for one provider. */
+function cardOf(snapshot, id) {
+  return snapshot.cards.find((card) => card.id === id)
+}
+
 test('an unconfigured panel says so and never invents a balance', () => {
   const home = tempHome()
   const panel = makePanel(home)
   const snapshot = panel.snapshot()
-  equal(snapshot.deepseek.state, 'unconfigured')
-  equal(snapshot.deepseek.source, 'none')
-  equal(snapshot.deepseek.balance, null)
-  equal(snapshot.settings.hasKey, false)
+  const deepseek = cardOf(snapshot, 'deepseek')
+  equal(deepseek.state, 'unconfigured')
+  equal(deepseek.source, 'none')
+  equal(deepseek.balance, null)
+  equal(snapshot.settings.deepseek.hasKey, false)
+  equal(snapshot.settings.minimax.hasKey, false)
+  equal(snapshot.settings.aliyun.hasKey, false)
+  equal(snapshot.cards.length, 3)
   equal(snapshot.ledger.state, 'unavailable')
   equal(snapshot.summary.monthCost, null)
   equal(snapshot.summary.live, 0)
-  equal(snapshot.summary.unconfigured, 1)
+  equal(snapshot.summary.unconfigured, 3)
 })
 
 test('updateSettings stores the key and only ever returns a mask', async () => {
   const home = tempHome()
   const panel = makePanel(home)
-  const result = await panel.updateSettings({ apiKey: 'sk-abcdefgh12345678' })
-  equal(result.settings.hasKey, true)
-  equal(result.settings.maskedKey, 'sk-…5678')
-  equal(result.settings.keySource, 'file')
+  const result = await panel.updateSettings({ service: 'deepseek', apiKey: 'sk-abcdefgh12345678' })
+  equal(result.settings.deepseek.hasKey, true)
+  equal(result.settings.deepseek.maskedKey, 'sk-…5678')
+  equal(result.settings.deepseek.keySource, 'file')
   ok(existsSync(credentialsPath(home)))
   ok(loadCredentials(home).apiKey === 'sk-abcdefgh12345678')
   ok(!JSON.stringify(result.snapshot).includes('sk-abcdefgh12345678'), 'the snapshot must never carry the clear key')
@@ -455,89 +465,93 @@ test('refresh turns the card live and persists the cache', async () => {
   const home = tempHome()
   const recorder = jsonFetch(BALANCE_DOC)
   const panel = makePanel(home, { fetchImpl: recorder.impl })
-  await panel.updateSettings({ apiKey: 'sk-abcdefgh12345678' })
+  await panel.updateSettings({ service: 'deepseek', apiKey: 'sk-abcdefgh12345678' })
   const snapshot = await panel.refresh()
-  equal(snapshot.deepseek.state, 'live')
-  equal(snapshot.deepseek.source, 'live')
-  equal(snapshot.deepseek.balance.total, 110)
-  equal(snapshot.deepseek.balance.currency, 'CNY')
-  equal(snapshot.lastAttempt.ok, true)
-  ok(snapshot.deepseek.fetchedAt > 0)
+  const deepseek = cardOf(snapshot, 'deepseek')
+  equal(deepseek.state, 'live')
+  equal(deepseek.source, 'live')
+  equal(deepseek.balance.total, 110)
+  equal(deepseek.balance.currency, 'CNY')
+  equal(snapshot.lastAttempts.deepseek.ok, true)
+  ok(deepseek.fetchedAt > 0)
   ok(existsSync(join(home, 'usage-panel', 'balance-cache.json')))
-  equal(loadBalanceCache(home).fingerprint.length, 16)
+  equal(loadProviderCache(home).deepseek.fingerprint.length, 16)
 })
 
 test('a restart serves the cached balance and marks it as cached', async () => {
   const home = tempHome()
   const panel = makePanel(home, { fetchImpl: jsonFetch(BALANCE_DOC).impl })
-  await panel.updateSettings({ apiKey: 'sk-abcdefgh12345678' })
+  await panel.updateSettings({ service: 'deepseek', apiKey: 'sk-abcdefgh12345678' })
   await panel.refresh()
 
   const restarted = makePanel(home)
   const snapshot = restarted.snapshot()
-  equal(snapshot.deepseek.state, 'cached')
-  equal(snapshot.deepseek.source, 'cache')
-  equal(snapshot.deepseek.balance.total, 110)
-  equal(snapshot.deepseek.error, null)
+  const deepseek = cardOf(snapshot, 'deepseek')
+  equal(deepseek.state, 'cached')
+  equal(deepseek.source, 'cache')
+  equal(deepseek.balance.total, 110)
+  equal(deepseek.error, null)
 })
 
 test('a failed refresh keeps the previous balance and reports the failure', async () => {
   const home = tempHome()
   const good = makePanel(home, { fetchImpl: jsonFetch(BALANCE_DOC).impl })
-  await good.updateSettings({ apiKey: 'sk-abcdefgh12345678' })
+  await good.updateSettings({ service: 'deepseek', apiKey: 'sk-abcdefgh12345678' })
   await good.refresh()
 
   const failing = makePanel(home, { fetchImpl: jsonFetch({ error: 'nope' }, { status: 401 }).impl })
   const snapshot = await failing.refresh()
-  equal(snapshot.deepseek.state, 'cached')
-  equal(snapshot.deepseek.source, 'cache')
-  equal(snapshot.deepseek.balance.total, 110, 'the last good number is still shown')
-  equal(snapshot.deepseek.error.code, 'unauthorized')
+  const deepseek = cardOf(snapshot, 'deepseek')
+  equal(deepseek.state, 'cached')
+  equal(deepseek.source, 'cache')
+  equal(deepseek.balance.total, 110, 'the last good number is still shown')
+  equal(deepseek.error.code, 'unauthorized')
   equal(snapshot.summary.cached, 1)
 })
 
 test('a failed refresh with no cache is an error state, not a zero balance', async () => {
   const home = tempHome()
   const panel = makePanel(home, { fetchImpl: jsonFetch({ error: 'nope' }, { status: 403 }).impl })
-  await panel.updateSettings({ apiKey: 'sk-abcdefgh12345678' })
+  await panel.updateSettings({ service: 'deepseek', apiKey: 'sk-abcdefgh12345678' })
   const snapshot = await panel.refresh()
-  equal(snapshot.deepseek.state, 'error')
-  equal(snapshot.deepseek.balance, null)
-  equal(snapshot.deepseek.error.code, 'forbidden')
+  const deepseek = cardOf(snapshot, 'deepseek')
+  equal(deepseek.state, 'error')
+  equal(deepseek.balance, null)
+  equal(deepseek.error.code, 'forbidden')
 })
 
 test('changing the endpoint drops the cached balance', async () => {
   const home = tempHome()
   const panel = makePanel(home, { fetchImpl: jsonFetch(BALANCE_DOC).impl })
-  await panel.updateSettings({ apiKey: 'sk-abcdefgh12345678' })
+  await panel.updateSettings({ service: 'deepseek', apiKey: 'sk-abcdefgh12345678' })
   await panel.refresh()
-  ok(existsSync(join(home, 'usage-panel', 'balance-cache.json')))
-  const result = await panel.updateSettings({ baseUrl: 'https://proxy.example' })
-  equal(result.settings.baseUrl, 'https://proxy.example')
-  equal(existsSync(join(home, 'usage-panel', 'balance-cache.json')), false)
-  equal(result.snapshot.deepseek.state, 'idle')
-  equal(result.snapshot.deepseek.balance, null)
+  ok(loadProviderCache(home).deepseek !== null)
+  const result = await panel.updateSettings({ service: 'deepseek', baseUrl: 'https://proxy.example' })
+  equal(result.settings.deepseek.baseUrl, 'https://proxy.example')
+  equal(loadProviderCache(home).deepseek, null)
+  equal(cardOf(result.snapshot, 'deepseek').state, 'idle')
+  equal(cardOf(result.snapshot, 'deepseek').balance, null)
 })
 
-test('clearKey removes the credential and the cache', async () => {
+test('clear removes the credential and the cache', async () => {
   const home = tempHome()
   const panel = makePanel(home, { fetchImpl: jsonFetch(BALANCE_DOC).impl })
-  await panel.updateSettings({ apiKey: 'sk-abcdefgh12345678' })
+  await panel.updateSettings({ service: 'deepseek', apiKey: 'sk-abcdefgh12345678' })
   await panel.refresh()
-  const result = await panel.updateSettings({ clearKey: true })
-  equal(result.settings.hasKey, false)
+  const result = await panel.updateSettings({ service: 'deepseek', clear: true })
+  equal(result.settings.deepseek.hasKey, false)
   equal(loadCredentials(home).apiKey, '')
-  equal(result.snapshot.deepseek.state, 'unconfigured')
-  equal(existsSync(join(home, 'usage-panel', 'balance-cache.json')), false)
+  equal(cardOf(result.snapshot, 'deepseek').state, 'unconfigured')
+  equal(loadProviderCache(home).deepseek, null)
 })
 
 test('a key from the environment cannot be cleared from the page', async () => {
   const home = tempHome()
   const panel = makePanel(home, { env: { DEEPSEEK_API_KEY: 'sk-env-1234567890' }, fetchImpl: jsonFetch(BALANCE_DOC).impl })
-  equal(panel.snapshot().settings.keySource, 'env')
+  equal(panel.snapshot().settings.deepseek.keySource, 'env')
   let caught
   try {
-    await panel.updateSettings({ clearKey: true })
+    await panel.updateSettings({ service: 'deepseek', clear: true })
   } catch (error) {
     caught = error
   }
@@ -549,8 +563,8 @@ test('a configured key with no ledger invents no usage figures', () => {
   const home = tempHome()
   const panel = makePanel(home, { env: { DEEPSEEK_API_KEY: 'sk-env-12345678' } })
   const snapshot = panel.snapshot()
-  equal(snapshot.settings.hasKey, true)
-  equal(snapshot.deepseek.usage, undefined, 'the balance card carries no spend')
+  equal(snapshot.settings.deepseek.hasKey, true)
+  equal(cardOf(snapshot, 'deepseek').usage, undefined, 'the balance card carries no spend')
   equal(snapshot.ledger.state, 'unavailable')
   equal(snapshot.summary.monthCost, null)
   deepEqual(snapshot.summary.servicesSpend, [])
@@ -558,20 +572,20 @@ test('a configured key with no ledger invents no usage figures', () => {
 
 test('testConnection without a key reports no-key instead of a blank failure', async () => {
   const panel = makePanel(tempHome())
-  const result = await panel.testConnection()
+  const result = await panel.testConnection('deepseek')
   equal(result.ok, false)
   equal(result.error.code, 'no-key')
-  equal(result.balance, null)
+  equal(result.card.balance, null)
 })
 
 test('testConnection makes a real request and reports latency', async () => {
   const home = tempHome()
   const recorder = jsonFetch(BALANCE_DOC, { delay: 5 })
   const panel = makePanel(home, { fetchImpl: recorder.impl })
-  await panel.updateSettings({ apiKey: 'sk-abcdefgh12345678' })
-  const result = await panel.testConnection()
+  await panel.updateSettings({ service: 'deepseek', apiKey: 'sk-abcdefgh12345678' })
+  const result = await panel.testConnection('deepseek')
   equal(result.ok, true)
-  equal(result.balance.total, 110)
+  equal(result.card.balance.total, 110)
   ok(result.ms >= 0)
   equal(recorder.calls.count, 1)
 })
@@ -580,11 +594,11 @@ test('concurrent refreshes collapse into one request', async () => {
   const home = tempHome()
   const recorder = jsonFetch(BALANCE_DOC, { delay: 15 })
   const panel = makePanel(home, { fetchImpl: recorder.impl })
-  await panel.updateSettings({ apiKey: 'sk-abcdefgh12345678' })
+  await panel.updateSettings({ service: 'deepseek', apiKey: 'sk-abcdefgh12345678' })
   const [first, second] = await Promise.all([panel.refresh(), panel.refresh()])
   equal(recorder.calls.count, 1)
-  equal(first.deepseek.state, 'live')
-  equal(second.deepseek.state, 'live')
+  equal(cardOf(first, 'deepseek').state, 'live')
+  equal(cardOf(second, 'deepseek').state, 'live')
 })
 
 test('the ledger detail and the cross-service summary read the fixture', () => {
@@ -599,7 +613,7 @@ test('the ledger detail and the cross-service summary read the fixture', () => {
   equal(snapshot.ledger.series.length, 7)
   equal(snapshot.summary.monthCost, 9.5)
   equal(snapshot.summary.todayCost, 1.75)
-  equal(snapshot.summary.services, 1, 'only official-balance cards count as cards')
+  equal(snapshot.summary.services, 3, 'all three official-balance cards count')
 
   // The summary bar is per service, with a human-facing name.
   equal(snapshot.summary.servicesSpend.length, 2)
@@ -735,7 +749,7 @@ test('snapshot answers with a complete page payload', async () => {
   const { response, json } = await call(handler)
   equal(response.status, 200)
   equal(json.ok, true)
-  equal(json.snapshot.deepseek.state, 'unconfigured')
+  equal(json.snapshot.cards.find((card) => card.id === 'deepseek').state, 'unconfigured')
   equal(json.snapshot.ledger.month.cost, 9.5)
   equal(response.headers['cache-control'], 'no-store')
 })
@@ -744,11 +758,11 @@ test('settings.update saves the key and answers with a mask only', async () => {
   const handler = mount(tempHome())
   const { response, json } = await call(handler, {
     url: `${ROUTE_PREFIX}/settings.update`,
-    body: { apiKey: 'sk-abcdefgh12345678' }
+    body: { service: 'deepseek', apiKey: 'sk-abcdefgh12345678' }
   })
   equal(response.status, 200)
   equal(json.ok, true)
-  equal(json.settings.maskedKey, 'sk-…5678')
+  equal(json.settings.deepseek.maskedKey, 'sk-…5678')
   ok(!response.body.includes('sk-abcdefgh12345678'))
 })
 
@@ -775,12 +789,19 @@ test('refresh reports the provider failure without failing the route', async () 
   const home = tempHome()
   await saveCredentials(home, 'sk-abcdefgh12345678')
   // A closed loopback port fails fast and deterministically, unlike the real API.
-  await saveSettings(home, { baseUrl: 'http://127.0.0.1:1', timeoutMs: 1000, currency: 'CNY' })
+  await saveSettings(home, {
+    baseUrl: 'http://127.0.0.1:1',
+    timeoutMs: 1000,
+    currency: 'CNY',
+    minimaxRegion: 'cn',
+    aliyunEndpoint: 'business.aliyuncs.com'
+  })
   const handler = mount(home)
   const { response, json } = await call(handler, { url: `${ROUTE_PREFIX}/refresh` })
   equal(response.status, 200)
-  equal(json.snapshot.deepseek.state, 'error')
-  equal(json.snapshot.deepseek.error.code, 'network')
+  const deepseek = json.snapshot.cards.find((card) => card.id === 'deepseek')
+  equal(deepseek.state, 'error')
+  equal(deepseek.error.code, 'network')
 })
 
 await run('host')

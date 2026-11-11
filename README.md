@@ -1,47 +1,47 @@
 # dsh-usage-panel · 服务余额与用量面板
 
-DSH 桌面端（DeepSeek Harness）的侧边栏页面，把两件事分开摆清楚：**各服务官方余额还剩多少**，以及**本机 DSH 这个月钱花在哪**（账本口径，标「估算」）。手动刷新、Key 打码、单卡失败降级。
+DSH 桌面端（DeepSeek Harness）的侧边栏页面：把两件事分开摆清楚——**各服务官方余额还剩多少**，以及**本机 DSH 这个月钱花在哪**（账本 + 会话统计，标「估算」）。
 
-> 当前版本 **0.1.1（P0 + P0.1）**。
-> P0.1 布局：顶部跨服务汇总条；卡片区只放官方余额；账本明细收进默认收起的折叠面板；页脚写明两种口径的差异。
-> 开发计划、优先级与状态以 **[PLAN.md](PLAN.md)** 为准（本文档跟随计划）。MiniMax / 阿里云 / 告警 / 多 Key / CSV 仍未实现。
+> 当前版本 **0.2.0（P0 + P0.1 + P1）**。
+> P1 新增：MiniMax Token Plan 订阅额度卡、阿里云 BSS 余额卡、按会话统计（会话日志 + 内置定价）。
+> 开发计划、优先级与状态以 **[PLAN.md](PLAN.md)** 为准。P2（自定义数据源 / 告警）与 P3（多 Key / CSV）未做。
+> 真实 API 调用需要各自的 Key，目前**未测**；下文会逐项标注。
 
 ![实时状态](docs/panel-live.png)
 
-另有 [账本明细展开](docs/panel-details.png)、[缓存状态](docs/panel-cached.png)、[未配置状态](docs/panel-unconfigured.png) 三张截图。
+另有 [账本明细 + 按会话](docs/panel-details.png)、[三服务异常态](docs/panel-error.png)、[未配置态](docs/panel-unconfigured.png)、[服务配置](docs/panel-config.png)、[缓存态](docs/panel-cached.png)。
 
 ---
 
-## 一、做了什么
+## 一、功能
 
 | 能力 | 说明 |
 | --- | --- |
-| 侧边栏入口 | 侧边栏新增「用量」行（图标 + 文字），点开是全局面板；不占用会话页面 |
-| 跨服务汇总条 | 「本月合计（账本口径）」+ 各服务本月消耗（如 DeepSeek / MiniMax），全部标 **估算**；右侧显示账本更新时间 |
-| DeepSeek 余额卡 | `GET https://api.deepseek.com/user/balance`，**只显示官方余额**（总额 / 赠金 / 充值），多币种时主数字取 CNY，其余币种单列 |
-| 账本明细（折叠） | 默认收起；展开后显示近 7 天趋势、按模型（provider + model）本月消耗与调用、按会话说明、账本文件与写入时间 |
-| 手动刷新 | 页头「刷新」按钮；初次打开先渲染快照，再在后台补一次刷新（有加载态，不阻塞界面） |
-| Key 打码 | 页面只收到 `sk-…3f2a` 形式的掩码；明文只在 Host 端使用，接口不返回明文 |
-| 测试连接 | 走真实请求，显示耗时 / 余额 / 失败原因；不复用缓存 |
-| 失败降级 | 5 秒超时 + 单卡错误态；有上次成功结果时显示缓存数据并标「数据可能过期」；DSH 启动不受影响 |
-| 数据来源标记 | 余额卡右上角标 **实时 / 缓存 / 异常**；账本推算出来的消耗标 **估算** |
-| 配置页 | 面板内联配置表单（不弹窗）：API Key、API 根地址、保存、清除 Key |
+| 侧边栏入口 | 侧边栏「用量」行，点开是全局面板 |
+| 跨服务汇总条 | 本月合计 + 各服务本月消耗（账本口径，**估算**）；账本更新时间 |
+| DeepSeek 卡 | 官方余额（总额 / 赠金 / 充值）；多币种主数字取 CNY，其余币种单列 |
+| MiniMax 卡 | Token Plan 订阅额度：5 小时窗口 / 每周窗口的剩余百分比、已用/总量、重置时间、套餐名 |
+| 阿里云卡 | BSS `QueryAccountBalance`：可用额度 / 现金余额 / 信控额度 / 网商信用 / Quota 限额 |
+| 账本明细（折叠） | 近 7 天趋势、按模型（provider + model）本月消耗与调用 |
+| 按会话统计（懒加载） | 展开明细时扫描本月会话日志，按内置价表估算每个会话的消耗 / 调用 / Token；只返回标题与数字 |
+| 手动刷新 | 页头刷新全部；每张卡「测试连接」只测自己 |
+| Key 打码 | 页面只收到掩码；明文仅在 Host 端 |
+| 失败降级 | 5 秒超时 + 单服务错误态；有缓存则显示旧值并标「缓存」；任一服务失败不影响其它卡 |
+| 配置页 | 三个服务分页配置，各自保存/清除，互不覆盖 |
 
-页面组成（P0.1，官方余额与账本分开）：
+页面结构：
 
 ```
-服务余额与用量                                       更新于 20:51  [刷新]
-本月合计（账本口径） ¥192.49 [估算]  [DeepSeek ¥192.49 估算]   账本更新于 20:51
+服务余额与用量                                        更新于 21:34  [刷新]
+本月合计（账本口径） ¥194.71 [估算]  [DeepSeek ¥194.71 估算]   账本更新于 21:34
 官方余额  来自各服务官方接口，来源标记见卡片右下角
-┌──────────────────────────────┐
-│ ● DeepSeek           [实时]   │
-│ ¥110.00                      │
-│ 赠金 ¥10.00   充值 ¥100.00    │
-│ 数据时间 20:51 · 实时          │
-│ sk-…3f2a  测试连接  去配置     │
-└──────────────────────────────┘
-账本明细  本月 ¥192.49 · 15,441 次调用                    展开 ▾
-（展开后：近 7 天趋势 / 按模型 / 按会话说明 / 账本文件）
+┌ DeepSeek ────────┐ ┌ MiniMax ─────────┐ ┌ 阿里云 ──────────┐
+│ ¥110.00          │ │ 62% 5 小时窗口    │ │ ¥10,000.00       │
+│ 赠金/充值         │ │ general 62%·周38%│ │ 现金/信控/Quota   │
+│ 数据时间 · 实时    │ │ 套餐/用量/重置    │ │ 数据时间 · 实时    │
+└──────────────────┘ └──────────────────┘ └──────────────────┘
+账本明细  本月 ¥… · N 次调用                      展开 ▾
+（展开：近 7 天趋势 / 按模型 / 按会话）
 官方余额 = 还剩多少钱；本机账本 = 钱花在哪。两者口径不同，可能不一致。
 ```
 
@@ -49,19 +49,19 @@ DSH 桌面端（DeepSeek Harness）的侧边栏页面，把两件事分开摆清
 
 ## 二、安装
 
-**当前会话没有替你安装**（安装会改 profile，需要你确认）。两种方式二选一：
+**当前没有替你安装**（安装会改 profile，需要确认）。二选一：
 
 ### 方式 A：插件管理器
 
-DSH → 设置 → 插件 → 安装，填入本目录：
+DSH → 设置 → 插件 → 安装，填入：
 
 ```
 E:/Data/Project/DeepSeekHarness/DSH-Homemade-Plugins/dsh-usage-panel
 ```
 
-### 方式 B：手工登记（与本工作区其它自用插件一致）
+### 方式 B：手工登记
 
-在 `~/.dsh/profiles/desktop/package.json` 里加依赖与 bundle：
+`~/.dsh/profiles/desktop/package.json`：
 
 ```jsonc
 {
@@ -70,66 +70,68 @@ E:/Data/Project/DeepSeekHarness/DSH-Homemade-Plugins/dsh-usage-panel
   },
   "dsh": {
     "profile": {
-      "bundles": [
-        // …已有条目…
-        "dsh-usage-panel"
-      ]
+      "bundles": [ /* …已有条目… */ "dsh-usage-panel" ]
     }
   }
 }
 ```
 
-然后在 profile 目录执行：
-
-```powershell
-cd $HOME\.dsh\profiles\desktop
-pnpm install
-```
-
-安装后需要重启 DSH（Loader 会缓存已加载的模块）。重启后左侧栏应出现「用量」；没有的话看 DSH 日志里有没有 `usage-panel:` 开头的行。
+然后 `cd $HOME\.dsh\profiles\desktop; pnpm install`，重启 DSH。
 
 ---
 
-## 三、配置 DeepSeek Key（一步一步）
+## 三、配置（按服务）
 
-1. 打开侧边栏 **用量**。
-2. DeepSeek 卡显示「未配置 DeepSeek Key」时，点 **去配置**（或卡片右下角的「去配置」）。
-3. 在 **API Key** 粘贴 Key（`sk-` 开头，DeepSeek 开放平台 → API keys 里创建）。
-4. **API 根地址** 保持 `https://api.deepseek.com`；只有走代理/网关时才改。
-5. 点 **保存**。保存成功后输入框会清空，占位符变成「已保存 sk-…xxxx，留空保持不变」。
-6. 点卡片上的 **测试连接**：成功显示「连接正常 · 128 ms · 余额 ¥…」；失败会显示具体原因（Key 无效 / 超时 / 无法连接等）。
+打开「用量」→ 卡片或配置页 → 选择对应服务页签。
 
-### Key 存在哪
+### DeepSeek
 
-| 文件 | 内容 | 权限 |
-| --- | --- | --- |
-| `~/.dsh/usage-panel/credentials.json` | DeepSeek Key（明文，但只在 Host 端读） | 创建时 `0600`（Windows 上 `chmod` 是尽力而为，实际受用户目录 ACL 保护） |
-| `~/.dsh/usage-panel/settings.json` | 非密配置：baseUrl / timeoutMs / currency | 同上 |
-| `~/.dsh/usage-panel/balance-cache.json` | 上次成功的余额（不含 Key，只有 Key 指纹） | 同上 |
+| 字段 | 说明 |
+| --- | --- |
+| API Key | DeepSeek 开放平台创建，`sk-` 开头 |
+| API 根地址 | 默认 `https://api.deepseek.com`，走代理时才改 |
 
-**不使用** DSH 自己的 `~/.dsh/.credentials.yaml`：那是 Harness 的凭据库，插件不去碰它。仓库里也没有任何 Key；`examples/` 里只有占位示例。
+保存后点卡片「测试连接」验证。余额接口只回答「还剩多少钱」，不提供消耗。
 
-### 备选：环境变量
+### MiniMax
 
-Host 进程若能看到 `DEEPSEEK_API_KEY`，也可以不落盘：
+| 字段 | 说明 |
+| --- | --- |
+| API Key | **订阅 Key**（Token Plan）。按量 Key（`sk-cp-*`）查不了订阅额度 |
+| 区域 | 中国大陆 `www.minimax.cn` / 国际 `www.minimax.io`，按 Key 所属站点选择 |
+
+字段语义提醒：当前端点的 `current_interval_usage_count` 按**已用**解释；若响应带 `*_remaining_percent`，界面优先采用「剩余百分比」，同时保留原始 used/total 供核对。
+
+**按量余额没有公开查询接口**：按量 Key 会显示「不能查询订阅额度」的说明；需要看余额时只能走控制台，或等 P2 的自定义数据源。卡片不会用 0 冒充。
+
+### 阿里云（RAM 子账号）
+
+1. 在 RAM 控制台创建一个**子账号**，不要用主账号 AccessKey；
+2. 授予只读权限 `bss:DescribeAcccount`（BSS OpenAPI 的账户余额查询权限）；
+3. 生成该子账号的 AccessKey ID + Secret，填入面板；
+4. Endpoint 默认 `business.aliyuncs.com`，一般不用改。
+
+面板显示 `Data.AvailableAmount` 等字段；`Success=false` 或鉴权失败会显示具体错误（AccessKey 无效 / 签名失败 / 无权限），不会显示假余额。
+
+### 存储与备选方式
+
+| 文件 | 内容 |
+| --- | --- |
+| `~/.dsh/usage-panel/credentials.json` | 三个服务的凭据（v2 结构），创建时 `0600`（Windows 上 `chmod` 为尽力而为，实际由用户目录 ACL 保护） |
+| `~/.dsh/usage-panel/settings.json` | 非密配置：DeepSeek baseUrl、MiniMax region、阿里云 endpoint、超时等 |
+| `~/.dsh/usage-panel/balance-cache.json` | 各服务上次成功结果（只含 Key 指纹，不含 Key） |
+
+凭据文件结构见 [`examples/credentials.example.json`](examples/credentials.example.json)，配置见 [`examples/settings.example.json`](examples/settings.example.json)。
+
+环境变量备选（两者同时提供才生效）：
 
 ```powershell
-[Environment]::SetEnvironmentVariable('DEEPSEEK_API_KEY', 'sk-…', 'User')
+DEEPSEEK_API_KEY
+MINIMAX_API_KEY
+ALIYUN_ACCESS_KEY_ID + ALIYUN_ACCESS_KEY_SECRET
 ```
 
-重启 DSH 后生效。注意桌面端从资源管理器启动时不继承临时 shell 的环境变量，建议用「用户级」变量并重启应用。环境变量提供的 Key 不能在页面里「清除」（接口会返回 `key-from-env`）。
-
-### 手动写配置文件（可选）
-
-```powershell
-# settings.json
-Copy-Item examples\settings.example.json "$HOME\.dsh\usage-panel\settings.json"
-
-# credentials.json（把占位 Key 换成真的）
-Copy-Item examples\credentials.example.json "$HOME\.dsh\usage-panel\credentials.json"
-```
-
-字段说明见 [`examples/settings.example.json`](examples/settings.example.json) 与 [`examples/credentials.example.json`](examples/credentials.example.json)。`timeoutMs` 会被夹在 **1000–5000** 之间，超过 5 秒的配置不生效——这是需求里的硬约束。
+环境变量提供的凭据不能在页面里「清除」（接口返回 `key-from-env`）。插件**不读取** `~/.dsh/.credentials.yaml`。
 
 ---
 
@@ -137,33 +139,41 @@ Copy-Item examples\credentials.example.json "$HOME\.dsh\usage-panel\credentials.
 
 | 数据源 | 状态 | 结论 |
 | --- | --- | --- |
-| DeepSeek 余额 | ✅ **已核实**（2026-11-11 对照官网） | `GET /user/balance`，`Authorization: Bearer <key>`；返回 `is_available` 与 `balance_infos[]`，金额字段是**字符串**；`currency` 可能为 `CNY`/`USD`。文档：<https://api-docs.deepseek.com/api/get-user-balance> |
-| 本机 DSH 账本 | ✅ **已核实（本机实际文件）** | `~/.dsh/dsh-usage/usage-ledger.json`，`version: 1`，`days[YYYY-MM-DD][provider][model]` 下有 `inputTokens/outputTokens/cacheReadTokens/cacheWriteTokens/reasoningTokens/calls/cost`。插件只读，不重算价格。 |
-| MiniMax | ⚠️ 部分核实，**P0 未实现** | 订阅额度接口 `GET https://www.minimax.cn/v1/token_plan/remains` 社区资料称字段语义为 `current_interval_usage_count = 已用`（不是剩余）；按量余额没有公开接口；订阅 Key 与按量 Key（`sk-cp-*`）是两个体系。上 P1 前需要再用真实 Key 核一遍。 |
-| 阿里云 BSS | ✅ 接口形态已知，**P0 未实现** | `QueryAccountBalance`（2017-12-14，RPC 签名，无请求参数）；需 RAM 子账号 + `bss:DescribeAcccount`；不要用主账号 AK。上 P1 时再实现。 |
+| DeepSeek 余额 | ✅ 已核实（2026-11-11 官网） | `GET /user/balance`，Bearer；`balance_infos[]`，金额是字符串；币种 CNY/USD。文档：<https://api-docs.deepseek.com/api/get-user-balance> |
+| MiniMax Token Plan | ✅ 端点/字段已核实（社区实测 + 官方 FAQ），⚠️ 语义有历史坑 | `GET {cn}/v1/token_plan/remains`（`www.minimax.cn` / `www.minimax.io`），Bearer；`base_resp.status_code` + `model_remains[]`，含 `current_interval_total_count/usage_count`、`current_weekly_total_count/usage_count`、`*_remaining_percent`、`*_end_time`。**未用真实订阅 Key 调用** |
+| 阿里云 BSS | ✅ 接口/返回字段已核实（官方文档） | `QueryAccountBalance`（BssOpenApi 2017-12-14），endpoint `business.aliyuncs.com`；返回 `Data.AvailableAmount/AvailableCashAmount/CreditAmount/MybankCreditAmount/Currency/QuotaLimit`；RAM 权限 `bss:DescribeAcccount`。**未用真实 RAM AccessKey 调用** |
+| 本机 DSH 账本 | ✅ 本机实际文件 | `~/.dsh/dsh-usage/usage-ledger.json` v1：`days[date][provider][model]` 的 tokens/calls/cost；插件只读，不重算价格 |
+| 会话日志 | ✅ 本机实际文件 | `~/.dsh/sessions/**/session.v4.jsonl.zstd`：多个 zstd 帧拼接，每帧一条事件；`session` / `session/title` / `assistant/message`（usage + `message.source.model` + time） |
+| DeepSeek 定价 | ✅ 官网核对（2026-11-11） | 1M tokens 单价；peak 01:00–04:00 / 06:00–10:00 UTC 工作日，其余半价；中国节假日不建模。文档：<https://api-docs.deepseek.com/quick_start/pricing> |
 
-### 没有伪造数据的三个地方
-
-1. **DeepSeek 余额**只来自官方接口；没有配置 Key 时显示「未配置」，不显示 `¥0.00`。
-2. **本月合计 / 各服务本月消耗**只来自本机账本，全部标 **估算**；DeepSeek 余额卡不再重复消耗数字。余额接口本身不提供消耗，两种口径的差异在页脚写明。
-3. **按会话**统计暂无可信数据源（账本只到「天 / 服务 / 模型」）。折叠面板里明确写「按会话统计需要另接会话日志（PLAN P1-3）」，不拿别的东西冒充。
+**未核实/未测**：MiniMax 真实订阅额度、阿里云真实余额、三家服务的真实网络错误路径、DSH 真机内的卡片渲染。mock 测试通过不等于真实接口已验证。
 
 ---
 
-## 五、降级与失败行为
+## 五、口径与降级
+
+### 三种数字
+
+1. **官方余额**：来自各服务接口，回答「还剩多少钱」；失败时不显示 0。
+2. **账本消耗**（汇总条 / 账本明细）：来自 `usage-ledger.json`，回答「DSH 本机花了多少」；全部标「估算」。
+3. **会话消耗**（按会话）：由会话日志的 usage 按内置价表重算，回答「钱花在哪个会话」；只覆盖 DeepSeek 已定价模型，未知模型计入 `unpricedCalls`，不编价格。
+
+和 DSH 右下角状态栏的「今日消耗」口径可能略有差异：本页面以账本文件为准并标「估算」。
+
+### 失败行为
 
 | 情况 | 表现 |
 | --- | --- |
-| 未配置 Key | 卡片虚线边框 +「未配置 DeepSeek Key」+「去配置」；不显示 0 |
-| 请求超时（>5 s） | 该卡红点 +「请求超时（5 秒）」；有旧数据则继续显示旧数据 |
-| 401 / 403 | 「Key 无效或已过期」/「Key 没有读取余额的权限」 |
-| 断网 / DNS 失败 | 「无法连接服务」；不影响其它卡，也不影响 DSH |
-| 有上次成功结果 | 标「缓存」，展示旧余额 + 「上次刷新失败，显示的可能是过期数据」 |
-| 账本文件不存在 | 汇总条显示「本月合计 不可用 / 账本文件未找到」；折叠面板可展开看路径；不显示 0 |
-| 账本正好写到一半 | 汇总条标「缓存」并显示上次结果；明细面板提示「本次读取失败，显示上次结果」 |
-| Host 路由不可用 | 整页错误态 +「重试」，不是白屏 |
+| 未配置某服务 | 该卡虚线 + 该服务的「未配置」说明 + 去配置；不显示假 0 |
+| 5 秒超时 | 该卡错误态；有缓存则显示旧值 + 过期提示 |
+| DeepSeek 401/403 | 「Key 无效或已过期」/「没有读取余额的权限」 |
+| MiniMax 1004 / 无订阅 | 「Key 无效」/「该 Key 没有可查询的订阅额度」 |
+| 阿里云签名/权限 | 「签名校验失败」/「RAM 账号没有 bss:DescribeAcccount」 |
+| 账本缺失/读失败 | 汇总条与明细显式提示；不显示 0 |
+| 会话日志损坏 | 跳过并计数，接口仍 200；不影响其它会话 |
+| Host 路由不可用 | 整页错误 + 重试，不是白屏 |
 
-所有网络请求都在 Host 端串行收口：**单请求 5 秒上限、不重试、不带 Key 进日志**。前端不做任何 provider 请求，因此没有 CORS，也没有把 Key 放进页面存储。
+所有 provider 请求都在 Host 端：单请求 5 秒上限、不重试、不带 Key 进日志；前端不做 provider 请求，没有 CORS，也没有把 Key 放进页面存储。
 
 ---
 
@@ -172,45 +182,55 @@ Copy-Item examples\credentials.example.json "$HOME\.dsh\usage-panel\credentials.
 ```powershell
 cd E:\Data\Project\DeepSeekHarness\DSH-Homemade-Plugins\dsh-usage-panel
 
-# 50 条离线用例：配置、余额解析、超时、账本汇总、缓存/降级、路由围栏
+# P0/P0.1 核心 + 路由 + 账本（50）
 node test/host.test.mjs
 
-# 27 条离线用例：模块契约、字典、两个 slot 注册、余额卡、汇总条、折叠明细、配置表单、页面挂载
+# P1：MiniMax / 阿里云签名 / 会话统计 / 凭据隔离（29）
+node test/p1.test.mjs
+
+# 浏览器端：三卡 / 配置分页 / 会话表 / 页面（27）
 node test/client.test.mjs
 
-# 或者一起跑
+# 全部
 npm test
 ```
 
-测试不联网、不需要 Key：`fetch` 被替换成记录器，写入都落在临时 `DSH_HOME` 下。
+测试不联网、不需要真实 Key：provider 请求由记录器回答，会话日志在临时目录里由多帧 zstd 生成。
 
-### 本地预览（不安装插件也能看）
+### 本地预览
 
 ```powershell
 node preview/server.mjs
 # http://127.0.0.1:8791/?mode=live
 ```
 
-`mode` 可选 `live | cached | unconfigured | error | no-ledger`；加 `&details=1` 直接展开账本明细，`&panel=config` 直接看配置表单。
-预览里的 **DeepSeek 余额是示例数据**，账本数字来自本机真实账本；页面顶部有醒目提示。预览用 vendored React 17 UMD（`preview/vendor/`，仅预览用，插件本身运行在 DSH 自带的 React 上）。
+- `mode`：`live | cached | unconfigured | error | no-ledger`
+- `&details=1`：展开账本明细（会加载预览会话表）
+- `&panel=config`：直接看三服务配置页
+- 预览中的三家余额、会话行为示例数据；账本是本机真实账本（`no-ledger` 除外）。横幅会写明。
 
-### 目录结构
+### 目录
 
 ```
 dsh-usage-panel/
-├─ PLAN.md                 # 工作文档：范围、验收、状态、变更记录（以此为准）
-├─ package.json            # dsh.bundle.patch + dsh.client（web）
-├─ cordis.patch.yml        # 插入一条 Loader row：id = usage-panel
-├─ icon.svg
+├─ PLAN.md                 # 工作文档：范围、验收、状态、变更记录
+├─ package.json / cordis.patch.yml / icon.svg
 ├─ lib/
-│  ├─ index.js             # Host：路由、缓存、降级、测试连接、汇总/明细快照
-│  ├─ config.js            # 路径、设置、凭据、打码
-│  ├─ deepseek.js          # GET /user/balance + 5 秒 deadline
-│  ├─ ledger.js            # 账本读取、今日/本月/7 天、按模型汇总
-│  └─ client.js            # 浏览器端：sidebar 入口 + 汇总条 + 余额卡 + 折叠明细
-├─ test/                   # 离线用例（自带零依赖 harness）
+│  ├─ index.js             # Host：三服务引擎、路由、缓存、会话入口
+│  ├─ config.js            # 设置、凭据 v2、打码、缓存迁移
+│  ├─ remote.js            # 统一 deadline / 错误分类
+│  ├─ deepseek.js          # GET /user/balance
+│  ├─ providers/
+│  │  ├─ minimax.js        # Token Plan remains
+│  │  └─ aliyun.js         # RPC HMAC-SHA1 + QueryAccountBalance
+│  ├─ ledger.js            # 账本读取、按天/按模型汇总
+│  ├─ pricing.js           # DeepSeek CNY 价表 + peak 判定
+│  ├─ sessions.js          # 多帧 zstd、会话聚合
+│  └─ client.js            # 侧边栏入口 + 三卡 + 配置 + 折叠明细
+├─ test/                   # 离线用例（host / p1 / client + harness）
 ├─ preview/                # 本地视觉预览（非插件运行时）
-├─ examples/               # 配置样例（占位 Key）
+├─ examples/               # 配置样例（占位凭据）
+├─ scripts/                # 暂存区密钥扫描
 └─ docs/                   # 截图
 ```
 
@@ -218,40 +238,39 @@ dsh-usage-panel/
 
 ## 七、已知限制 / 未做
 
-- **还没有在真机装过**：本会话按约定停在「需要你确认安装 / 提供 Key」这一步。Host/浏览器两半的离线契约、渲染、路由围栏都有测试；真实 DSH 页面与真实余额的联调待安装后进行。
-- **P0.1 已完成布局调整**：汇总条 / 余额卡 / 折叠明细三层。P1 接入 MiniMax、阿里云后，汇总条与卡片区才会覆盖全部服务。
-- **「按会话」没有数据源**：账本只按「天 / 服务 / 模型」汇总；折叠面板里明确说明需要另接会话日志（PLAN P1-3），尚未实现。
-- **P1/P2 未做**：MiniMax、阿里云、30 天趋势图、按服务占比、自定义数据源、余额告警。
-- **P3 未做**：多 Key 细分、导出 CSV。当前一个服务一把 Key。
-- **消耗只来自账本**：余额接口不提供消耗；汇总条与明细里的金额都是本机账本口径，标「估算」，与官方账户实际扣费可能有差异。
-- **账本里的 `cost` 为 0 的旧日期**：插件如实显示 0，不按价格表补算（避免与 DSH 状态栏口径不一致）。
-- **Windows 文件权限**：`chmod 0600` 在 Windows 上不改变 ACL 语义，凭据文件实际由用户目录与 NTFS ACL 保护；如果多人共用这台机器，建议改用环境变量或专门的凭据管理。
-- **预览与生产的 React**：预览用 React 17 UMD；DSH 页面用的是自带的 React 运行时。插件只使用 `createElement` 和基础 hooks，两者兼容。
+- **还没有在真机装过**：按约定停在安装前。真实 DSH 页面、真实接口、真实网络错误未验证。
+- **真实 API 未测**：MiniMax 订阅 Key、阿里云 RAM AccessKey、DeepSeek 真实 Key 都没有调用过；测试全部是 mock/fixture。
+- **会话统计只在离线 fixture 上验证**：真实 527 个会话日志的全量扫描耗时与准确性未测；首次展开可能较慢（会显示加载态）。
+- **会话定价有边界**：只内置 DeepSeek `deepseek-flash` / `deepseek-v4-pro` CNY 价；未知模型计 `unpricedCalls`；中国法定节假日未建模（按工作日算）；`cacheWrite` 无价格时不计价。
+- **MiniMax 字段语义有风险**：`usage_count` 在不同端点/版本有「已用/剩余」两种解读；面板按「已用」并优先采用 `*_remaining_percent`，但真实响应未核。
+- **MiniMax 按量余额、阿里云账单明细**：仍无接口/未实现（P2）。
+- **P2/P3 未做**：自定义数据源、余额告警、多 Key、导出 CSV。
+- **Windows 文件权限**：`chmod 0600` 在 Windows 上不改变 ACL 语义，凭据文件由用户目录/NTFS ACL 保护；多人共用时建议环境变量。
+- **预览与生产 React**：预览用 React 17 UMD，插件运行在 DSH 自带 React 上。
 
 ---
 
-## 八、验收标准对照
+## 八、验收对照
 
-### P0（保留记录）
-
-| # | 验收项 | 状态 |
-| --- | --- | --- |
-| 1 | 配置 DeepSeek Key 后余额与官方后台一致 | ⏳ 待装 + 待 Key 联调；解析格式已按官网核对 |
-| 2 | 账本今日/本月与 DSH 状态栏一致 | ⏳ 账本数字已与文件逐项核对；状态栏交叉验证待装 |
-| 3 | Key 打码、测试连接可用 | ✅ 打码/接口已测；测试连接真实请求逻辑已测，真实 Key 联调待装 |
-| 4 | 断网时错误状态、DSH 不崩溃不卡死 | ✅ 超时/网络错误/缓存回退均有离线用例；真实断网待装 |
-| 5 | 刷新不阻塞界面（有加载态） | ✅ 骨架屏 + 刷新中按钮；先快照后后台刷新 |
-| 6 | 每张卡有更新时间与来源标记 | ✅ 实时/缓存/异常 + 数据时间 |
-| 7 | README 写清权限、已核实/未核实 | ✅ 见第四节、第七节 |
-
-### P0.1（本次布局调整）
+### P0 + P0.1
 
 | # | 验收项 | 状态 |
 | --- | --- | --- |
-| A1 | 汇总条显示本月合计 + 各服务本月消耗，均标「估算」 | ✅ 离线用例 + 预览 |
-| A2 | 卡片区只放官方余额；余额卡不再重复消耗/趋势 | ✅ 离线用例 + 预览 |
-| A3 | 账本明细默认收起；展开含 7 天趋势、按模型、按会话说明 | ✅ 离线用例 + 预览 |
-| A4 | 页脚写明两种口径的差异 | ✅ |
-| A5 | 账本缺失/读失败显式提示，不显示 0 | ✅ 汇总条 + 折叠面板 |
-| A6 | P0 的打码、测试连接、超时降级不回归 | ✅ 全量用例 |
-| A7 | 测试更新并全绿 | ✅ Host 50 / Client 27 |
+| P0-1 | DeepSeek 余额与官方一致 | ⏳ 待真机 + 真实 Key |
+| P0-2 | 账本今日/本月与状态栏一致 | ⏳ 账本已核对；状态栏交叉验证待装 |
+| P0-3 | Key 打码 / 测试连接 | ✅ 打码/接口已测；真实 Key 待装 |
+| P0-4 | 断网错误态、不崩不卡 | ✅ 离线用例 |
+| P0-5 | 刷新不阻塞 | ✅ 骨架屏 + 后台刷新 |
+| P0-6 | 每卡更新时间与来源 | ✅ |
+| A1–A7 | 汇总条 / 只放余额 / 折叠明细 / 页脚口径 / 缺失提示 / 回归 / 测试全绿 | ✅ |
+
+### P1
+
+| # | 验收项 | 状态 |
+| --- | --- | --- |
+| MM-1…MM-7 | MiniMax 解析、百分比、错误映射、超时、区域、打码、零值 | ✅ mock 全绿；真实订阅 Key **未测** |
+| AL-1…AL-7 | 阿里云签名已知答案、请求不含 Secret、解析、错误映射、打码、endpoint、超时 | ✅ mock 全绿；真实 RAM **未测** |
+| SS-1…SS-9 | 会话成本精确、重试去重、月份过滤、未知模型、损坏跳过、无正文、缓存、性能、UI 状态 | ✅ fixture 全绿；真实全量 **未测** |
+| IN-1…IN-5 | 三卡并存、凭据迁移/隔离、服务名、回归、安全检查 | ✅ |
+
+测试总数：**Host 50 + P1 29 + Client 27 = 106**，全部通过（`npm test`）。

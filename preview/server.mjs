@@ -79,6 +79,61 @@ function projectLedger(summary) {
   }
 }
 
+/** A MiniMax Token Plan fixture: two models, both windows. */
+function minimaxQuota() {
+  const model = (name, intervalRemaining, weeklyRemaining) => ({
+    name,
+    plan: 'Plus',
+    interval: {
+      total: 1000,
+      used: Math.round(1000 * (100 - intervalRemaining) / 100),
+      remainingPercent: intervalRemaining,
+      usedPercent: 100 - intervalRemaining,
+      startAt: null,
+      endAt: Date.now() + 2 * 60 * 60_000,
+      remainsAt: null
+    },
+    weekly: {
+      total: 10000,
+      used: Math.round(10000 * (100 - weeklyRemaining) / 100),
+      remainingPercent: weeklyRemaining,
+      usedPercent: 100 - weeklyRemaining,
+      startAt: null,
+      endAt: null,
+      remainsAt: null
+    }
+  })
+  const models = [model('general', 62, 38), model('video', 91, 84)]
+  return { plan: 'Plus', models, primary: models[0] }
+}
+
+/** An Aliyun BSS balance fixture. */
+const SAMPLE_ALIYUN = {
+  available: 10000,
+  cash: 9500,
+  credit: 500,
+  mybankCredit: 0,
+  quotaLimit: 10000,
+  currency: 'CNY'
+}
+
+/** Preview-only session rows; the banner says the data is illustrative. */
+const PREVIEW_SESSIONS = {
+  monthKey: '2026-11',
+  sessions: [
+    { id: 'session-a', title: '服务余额与用量面板插件', calls: 342, tokens: 1280000, cost: 3.42, unpricedCalls: 0, unpricedModels: [], lastAt: Date.now() },
+    { id: 'session-b', title: '插件需求评估', calls: 118, tokens: 420000, cost: 1.18, unpricedCalls: 0, unpricedModels: [], lastAt: Date.now() },
+    { id: 'session-c', title: 'P1 会话统计验证', calls: 47, tokens: 96000, cost: 0.36, unpricedCalls: 0, unpricedModels: [], lastAt: Date.now() }
+  ],
+  totalSessions: 3,
+  scanned: 12,
+  skipped: 0,
+  durationMs: 87,
+  pricing: { label: 'DeepSeek 官方标价（CNY，2026-10-08 版）' },
+  cached: false,
+  ageMs: 0
+}
+
 /** Build the whole page payload for the requested mode. */
 function buildSnapshot() {
   const now = Date.now()
@@ -94,56 +149,76 @@ function buildSnapshot() {
   const ledger = { ...projectLedger(ledgerSource), file: displayFile }
 
   const configured = mode !== 'unconfigured'
-  // `no-ledger` exists to show the DeepSeek card healthy next to a missing
-  // ledger, so it behaves like `live` for the provider half.
-  const providerMode = mode === 'no-ledger' ? 'live' : mode
-  const balance = configured && providerMode !== 'error' ? SAMPLE_BALANCE : null
-  const hasCache = configured && (providerMode === 'live' || providerMode === 'cached')
-  const failed = providerMode === 'cached' || providerMode === 'error'
-  let state = 'unconfigured'
-  let source = 'none'
-  let error = null
-  if (configured) {
-    if (providerMode === 'live') { state = 'live'; source = 'live' }
-    else if (providerMode === 'cached') { state = 'cached'; source = 'cache'; error = { code: 'timeout', message: 'preview fixture' } }
-    else { state = 'error'; error = { code: 'unauthorized', message: 'preview fixture' } }
-  }
-
+  const deepseekCached = mode === 'cached'
+  const deepseekError = mode === 'error'
+  const deepseekState = !configured ? 'unconfigured'
+    : deepseekError ? 'error'
+      : deepseekCached ? 'cached' : 'live'
+  const deepseekSource = deepseekState === 'live' ? 'live' : deepseekState === 'cached' ? 'cache' : 'none'
+  const deepseekFetchedAt = deepseekState === 'live'
+    ? now
+    : deepseekState === 'cached' ? now - 15 * 60_000 : null
   const deepseek = {
     id: 'deepseek',
     name: 'DeepSeek',
     kind: 'remote',
-    state,
-    source,
-    available: balance === null ? null : balance.isAvailable,
-    balance: hasCache ? balance.primary : null,
-    items: hasCache ? balance.items : [],
-    fetchedAt: hasCache ? (mode === 'cached' ? now - 15 * 60_000 : now) : null,
-    error,
-    key: {
-      configured,
-      masked: configured ? 'sk-…3f2a' : '',
-      source: configured ? 'file' : 'none'
-    }
+    state: deepseekState,
+    source: deepseekSource,
+    available: configured && !deepseekError ? SAMPLE_BALANCE.isAvailable : null,
+    balance: configured && !deepseekError ? SAMPLE_BALANCE.primary : null,
+    items: configured && !deepseekError ? SAMPLE_BALANCE.items : [],
+    fetchedAt: deepseekFetchedAt,
+    error: deepseekError
+      ? { code: 'unauthorized', message: 'preview fixture' }
+      : deepseekCached ? { code: 'timeout', message: 'preview fixture' } : null,
+    key: { configured, masked: configured ? 'sk-…3f2a' : '', source: configured ? 'file' : 'none' }
   }
 
-  const live = deepseek.state === 'live' ? 1 : 0
-  const cached = deepseek.state === 'cached' ? 1 : 0
-  const failedCount = deepseek.state === 'error' ? 1 : 0
-  const unconfigured = deepseek.state === 'unconfigured' ? 1 : 0
+  const minimax = {
+    id: 'minimax',
+    name: 'MiniMax',
+    kind: 'remote',
+    state: !configured ? 'unconfigured'
+      : mode === 'error' ? 'error'
+        : mode === 'cached' ? 'cached' : 'live',
+    source: mode === 'error' || !configured ? 'none' : mode === 'cached' ? 'cache' : 'live',
+    fetchedAt: !configured || mode === 'error' ? null : mode === 'cached' ? now - 15 * 60_000 : now,
+    error: mode === 'error' ? { code: 'minimax-no-plan', message: 'preview fixture' } : null,
+    key: { configured, masked: configured ? 'mm-…9b2c' : '', source: configured ? 'file' : 'none' },
+    quota: !configured || mode === 'error' ? null : minimaxQuota()
+  }
+
+  const aliyun = {
+    id: 'aliyun',
+    name: '阿里云',
+    kind: 'remote',
+    state: !configured ? 'unconfigured'
+      : mode === 'error' ? 'error'
+        : mode === 'cached' ? 'cached' : 'live',
+    source: mode === 'error' || !configured ? 'none' : mode === 'cached' ? 'cache' : 'live',
+    fetchedAt: !configured || mode === 'error' ? null : mode === 'cached' ? now - 15 * 60_000 : now,
+    error: mode === 'error' ? { code: 'aliyun-signature', message: 'preview fixture' } : null,
+    key: { configured, masked: configured ? 'LTAI…eyId' : '', source: configured ? 'file' : 'none' },
+    balance: !configured || mode === 'error' ? null : SAMPLE_ALIYUN
+  }
+
+  const cards = [deepseek, minimax, aliyun]
+  const counts = { live: 0, cached: 0, unconfigured: 0, error: 0, idle: 0 }
+  for (const card of cards) {
+    if (card.state === 'live') counts.live += 1
+    else if (card.state === 'cached') counts.cached += 1
+    else if (card.state === 'unconfigured') counts.unconfigured += 1
+    else if (card.state === 'error') counts.error += 1
+    else counts.idle += 1
+  }
 
   return {
     generatedAt: now,
-    cards: [deepseek],
-    deepseek,
+    cards,
     ledger,
     summary: {
-      services: 1,
-      live,
-      cached,
-      unconfigured,
-      error: failedCount,
-      idle: 0,
+      services: 3,
+      ...counts,
       monthCost: ledgerSource.available ? ledgerSource.month.cost : null,
       todayCost: ledgerSource.available ? ledgerSource.today.cost : null,
       monthCalls: ledgerSource.available ? ledgerSource.month.calls : null,
@@ -159,20 +234,23 @@ function buildSnapshot() {
           }))
         : []
     },
-    lastAttempt: failed
-      ? { at: now - 60_000, ok: false, ms: 5000, error }
-      : configured
-        ? { at: now, ok: true, ms: 128, error: null }
-        : null,
+    lastAttempts: {
+      deepseek: deepseek.error === null ? { at: now, ok: true, ms: 128, error: null } : { at: now - 60_000, ok: false, ms: 5000, error: deepseek.error },
+      minimax: minimax.error === null ? { at: now, ok: true, ms: 210, error: null } : { at: now - 60_000, ok: false, ms: 5000, error: minimax.error },
+      aliyun: aliyun.error === null ? { at: now, ok: true, ms: 260, error: null } : { at: now - 60_000, ok: false, ms: 5000, error: aliyun.error }
+    },
     settings: {
-      baseUrl: 'https://api.deepseek.com',
       timeoutMs: 5000,
-      currency: 'CNY',
-      hasKey: configured,
-      maskedKey: configured ? 'sk-…3f2a' : '',
-      keySource: configured ? 'file' : 'none',
-      savedAt: now,
-      ledgerFile: file,
+      deepseek: {
+        baseUrl: 'https://api.deepseek.com',
+        hasKey: configured,
+        maskedKey: configured ? 'sk-…3f2a' : '',
+        keySource: configured ? 'file' : 'none',
+        savedAt: configured ? now : null
+      },
+      minimax: { region: 'cn', hasKey: configured, maskedKey: configured ? 'mm-…9b2c' : '', keySource: configured ? 'file' : 'none' },
+      aliyun: { endpoint: 'business.aliyuncs.com', hasKey: configured, accessKeyIdMasked: configured ? 'LTAI…eyId' : '', keySource: configured ? 'file' : 'none' },
+      ledgerFile: displayFile,
       settingsFile: join(home, 'usage-panel', 'settings.json'),
       credentialsFile: join(home, 'usage-panel', 'credentials.json')
     }
@@ -184,25 +262,37 @@ function respondApi(request, response, method) {
   let body = ''
   request.on('data', (chunk) => { body += chunk })
   request.on('end', () => {
+    const payload = body.trim() === '' ? {} : (() => {
+      try {
+        return JSON.parse(body)
+      } catch {
+        return {}
+      }
+    })()
     const snapshot = buildSnapshot()
-    let payload
-    if (method === 'test') {
-      const ok = mode === 'live'
-      payload = {
+    let result
+    if (method === 'sessions') {
+      result = { ok: true, sessions: PREVIEW_SESSIONS }
+    } else if (method === 'test') {
+      const service = typeof payload.service === 'string' ? payload.service : 'deepseek'
+      const card = snapshot.cards.find((entry) => entry.id === service) ?? snapshot.cards[0]
+      result = {
         ok: true,
         result: {
-          ok,
-          ms: ok ? 128 : 5000,
-          balance: ok ? SAMPLE_BALANCE.primary : null,
-          items: ok ? SAMPLE_BALANCE.items : [],
-          error: ok ? null : { code: mode === 'cached' ? 'timeout' : 'unauthorized', message: 'preview fixture' },
+          service: card.id,
+          ok: card.state === 'live',
+          ms: card.state === 'live' ? 128 : 5000,
+          error: card.error,
+          card,
           snapshot
         }
       }
+    } else if (method === 'settings.update') {
+      result = { ok: true, settings: snapshot.settings, snapshot }
     } else {
-      payload = { ok: true, snapshot }
+      result = { ok: true, snapshot }
     }
-    const text = JSON.stringify(payload)
+    const text = JSON.stringify(result)
     response.writeHead(200, {
       'content-type': 'application/json; charset=utf-8',
       'content-length': Buffer.byteLength(text),
