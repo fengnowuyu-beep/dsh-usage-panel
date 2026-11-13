@@ -465,6 +465,10 @@ test('money formats currencies; moneyFine keeps small session costs readable', (
   equal(internals.money(1234.5), '¥1,234.50')
   equal(internals.money('12.3', 'USD'), '$12.30')
   equal(internals.moneyFine(0.00912), '¥0.0091')
+  equal(internals.compactTokens(2000), '2.0K')
+  equal(internals.compactTokens(1_250_000), '1.3M')
+  equal(internals.sharePercent(25, 100), '25%')
+  equal(internals.sharePercent(1, 0), '—')
 })
 
 test('describeError maps the P1 provider codes', () => {
@@ -620,7 +624,7 @@ test('the ledger detail starts collapsed', () => {
   ok(!text.includes('按会话'), text)
 })
 
-test('expanded detail includes the trend, models and the session table host', () => {
+test('expanded detail shows KPIs, day rows, model tokens and session rank', () => {
   const tree = render(internals.LedgerDetails, {
     snapshot: snapshotFixture(),
     t,
@@ -630,10 +634,37 @@ test('expanded detail includes the trend, models and the session table host', ()
     onLoadSessions() {}
   })
   const text = treeText(tree)
+  ok(text.includes('本月花费'), text)
+  ok(text.includes('本月 Tokens'), text)
+  ok(text.includes('占比'), text)
+  ok(text.includes('日期'), text)
   ok(text.includes('近 7 天'), text)
   ok(text.includes('按模型'), text)
   ok(text.includes('按会话'), text)
   ok(find(tree, (element) => element.type === internals.SessionTable) !== undefined)
+})
+
+test('the session table keeps all scanned rows and ranks by spend', () => {
+  const sessions = Array.from({ length: 12 }, (_, index) => ({
+    id: `session-${index}`,
+    title: `会话 ${index + 1}`,
+    calls: index + 1,
+    tokens: (index + 1) * 1000,
+    cost: (12 - index) / 100,
+    unpricedCalls: 0,
+    unpricedModels: [],
+    lastAt: Date.now() - index
+  }))
+  const tree = render(internals.SessionTable, {
+    state: { phase: 'ready', data: sessionData({ sessions, totalSessions: 12 }), error: null },
+    t,
+    onLoad() {}
+  })
+  const ranks = findAll(tree, (element) => String(element.props?.className).includes('dsu-session-rank'))
+  equal(ranks.length, 12)
+  const text = treeText(tree)
+  ok(text.includes('显示 12 / 共 12'), text)
+  ok(text.includes('会话 12'), text)
 })
 
 test('the session table renders title, calls and four-decimal cost', () => {
@@ -898,6 +929,7 @@ test('platform links open the official console in a new tab', () => {
 
   equal(render(internals.PlatformLink, { card: customCard(), t }), null)
   equal(internals.platformUrl(customCard()), null)
+  equal(internals.platformUrl(aliyunCard()), 'https://billing-cost.console.aliyun.com/home')
 })
 
 test('KeyRows lists additional keys and hides itself for a single key', () => {
